@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   IconBack,
@@ -128,7 +128,18 @@ export default function Configurator({ workshop = null, initial, onInquiry, stor
   onInquiry?: (channel: string, config: WardrobeConfig, price: number) => void;
 }) {
   const demo = workshop === null;
-  const [config, setConfig] = useState<WardrobeConfig>(initial ?? DEFAULT_CONFIG);
+  const [config, setRawConfig] = useState<WardrobeConfig>(initial ?? DEFAULT_CONFIG);
+  const fitRef = useRef(store?.fit);
+  fitRef.current = store?.fit;
+  // en la tienda, cada cambio sale ya dentro de las reglas del comercio: un solo dibujo por cambio
+  const setConfig = useCallback((next: WardrobeConfig | ((cur: WardrobeConfig) => WardrobeConfig)) => {
+    setRawConfig((cur) => {
+      const value = typeof next === "function" ? next(cur) : next;
+      const fitted = fitRef.current ? fitRef.current(value) : value;
+      // si quedó igual, se devuelve el mismo objeto: nada se vuelve a calcular ni a dibujar
+      return JSON.stringify(fitted) === JSON.stringify(cur) ? cur : fitted;
+    });
+  }, []);
   const [tab, setTab] = useState<Tab>("forma");
   const [selection, setSelection] = useState({ run: 0, module: 0 });
   const [open, setOpen] = useState(false);
@@ -217,13 +228,6 @@ export default function Configurator({ workshop = null, initial, onInquiry, stor
   useEffect(() => {
     if (loaded) storeRef.current?.onChange?.(config, result.price);
   }, [config, result.price, loaded]);
-  // el modelo de la tienda manda: si un cambio se sale de sus límites, vuelve adentro
-  useEffect(() => {
-    const fit = storeRef.current?.fit;
-    if (!fit) return;
-    const fitted = fit(config);
-    if (JSON.stringify(fitted) !== JSON.stringify(config)) setConfig(fitted);
-  }, [config]);
   const addToCart = async () => {
     if (!store || adding === "busy") return;
     setAdding("busy");
@@ -370,8 +374,11 @@ export default function Configurator({ workshop = null, initial, onInquiry, stor
 
   if (store?.addRef) store.addRef.current = () => void addToCart();
   const wLim = store?.width ?? LIMITS.width;
-  const storePrice = useMemo(() => (store?.price ? store.price(config) : null), [config, store]);
-  const priceLines = useMemo(() => (store?.lines ? store.lines(config) : null), [config, store]);
+  // dependen solo de la configuración: el objeto `store` cambia en cada dibujo y no debe disparar otro cálculo
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const storePrice = useMemo(() => (storeRef.current?.price ? storeRef.current.price(config) : null), [config]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const priceLines = useMemo(() => (storeRef.current?.lines ? storeRef.current.lines(config) : null), [config]);
   const price = useAnimatedNumber(storePrice ?? result.price);
   const message = orderMessage(config, money(result.price), shareLink(config), {
     rows: result.rows,
@@ -421,6 +428,8 @@ export default function Configurator({ workshop = null, initial, onInquiry, stor
             environment={environment}
             view={view}
             onReady={() => setTimeout(() => setReady(true), 120)}
+            // en la tienda el placard aparece armado: sin la animación de armado pieza por pieza
+            intro={store ? false : undefined}
             captureRef={captureRef}
             zoom={shrink.zoom}
             framing={portrait ? 0.82 : undefined}

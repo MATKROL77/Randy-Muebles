@@ -210,7 +210,18 @@ const STYLE_ITEM: Partial<Record<DoorStyle, ItemKey>> = { mirror: "espejo", glas
  * cantidades salen del despiece (lo mismo que se ve en 3D): cada estante,
  * barral, cajón o bandeja que está dibujado está cobrado, y nada más.
  */
+const quoted = new WeakMap<WardrobeConfig, DemoQuote>();
+
 export function demoQuote(config: WardrobeConfig): DemoQuote {
+  // el mismo objeto de configuración se cotiza una sola vez (precio, renglones y aviso a la tienda lo piden a la vez)
+  const known = quoted.get(config);
+  if (known) return known;
+  const fresh = computeQuote(config);
+  quoted.set(config, fresh);
+  return fresh;
+}
+
+function computeQuote(config: WardrobeConfig): DemoQuote {
   setupCatalog();
   const p = PRICES.placard;
   const wi = step(p.widths, config.runs[0].width);

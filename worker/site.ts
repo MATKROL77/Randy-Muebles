@@ -16,7 +16,8 @@ function cacheControl(path: string): string {
   if (path.startsWith("/_next/static/")) return "public, max-age=31536000, immutable";
   if (/^\/(tex|models|env)\//.test(path)) return `public, max-age=${DAY}, stale-while-revalidate=${7 * DAY}`;
   if (path === "/tn/embed.js") return "public, max-age=300";
-  if (path.endsWith(".html")) return "no-cache";
+  // la página: el navegador siempre pregunta, y el borde la guarda un minuto
+  if (path.endsWith(".html")) return "public, max-age=0, s-maxage=60";
   return "public, max-age=3600";
 }
 
@@ -64,7 +65,7 @@ export async function serveSite(request: Request, store: SiteStore, ctx?: { wait
   });
   if (found.path === "/tn/embed.js") headers.set("Access-Control-Allow-Origin", "*");
   const response = new Response(found.value, { status, headers });
-  if (edge && status === 200 && !found.path.endsWith(".html")) {
+  if (edge && status === 200) {
     const put = edge.put(cacheKey, response.clone());
     if (ctx) ctx.waitUntil(put);
     else await put;

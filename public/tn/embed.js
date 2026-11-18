@@ -72,7 +72,7 @@
       ".rm-cfg dl{margin:6px 0 0;display:grid;grid-template-columns:auto 1fr;gap:1px 10px}.rm-cfg dt{opacity:.65}.rm-cfg dd{margin:0}",
       ".rm-cfg a{text-decoration:underline}.rm-cfg img{float:right;width:84px;height:84px;object-fit:cover;border-radius:8px;margin:0 0 6px 10px}",
       ".rm-cfg small{display:block;opacity:.65;margin-top:6px}",
-      ".rm-extras .js-cart-quantity-btn{visibility:hidden}.rm-extras .js-cart-quantity-input{pointer-events:none;width:5ch}",
+      ".rm-extras .js-cart-quantity-btn{visibility:hidden;pointer-events:none}.rm-extras .js-cart-quantity-input{pointer-events:none;width:5ch;background:transparent;border:0}.rm-part .js-cart-item-remove{display:none!important}",
       ".rm-done{position:fixed;inset:0;z-index:2147483000;background:rgba(20,18,15,.55);display:flex;align-items:flex-end;justify-content:center;padding:0}",
       "@media (min-width:640px){.rm-done{align-items:center;padding:24px}}",
       ".rm-card{background:#fff;color:#1f1d1a;width:100%;max-width:520px;max-height:92vh;overflow:auto;border-radius:20px 20px 0 0;padding:22px 20px 18px;box-shadow:0 30px 80px -20px rgba(0,0,0,.5);font-size:14px;line-height:1.5}",
@@ -101,6 +101,9 @@
         box.innerHTML = "Parte del placard <b class='rm-id'>" + esc(line.id) + "</b>" + (line.detail ? " · " + esc(line.detail) : "") + ".";
         // la cantidad sale del diseño: se cambia desde el configurador, no desde el carrito
         el.classList.add("rm-extras");
+        el.classList.add("rm-part");
+        var q = el.querySelector(".js-cart-quantity-input");
+        if (q) q.readOnly = true;
       } else {
         box.innerHTML =
           (line.snapshotUrl ? "<img alt='' loading='lazy' src='" + esc(line.snapshotUrl) + "'>" : "") +
@@ -112,12 +115,100 @@
             })
             .join("") +
           "</dl>" +
-          "<small>Total de demostración con sus agregados: " + money(line.price) + " · <a target='_blank' rel='noopener' href='" + esc(line.viewUrl) + "'>ver en 3D</a></small>";
+          "<small>Total de demostración con sus agregados: " + money(line.price) + " · <a target='_blank' rel='noopener' href='" + esc(line.viewUrl) + "'>ver en 3D</a>" + (line.sheetUrl ? " · <a target='_blank' rel='noopener' href='" + esc(line.sheetUrl) + "'>hoja de taller</a>" : "") + "</small>";
         el.classList.add("rm-extras");
+        var mq = el.querySelector(".js-cart-quantity-input");
+        if (mq) mq.readOnly = true;
+        // quitar el placard quita también sus agregados
+        var rm = el.querySelectorAll(".js-cart-item-remove");
+        for (var r = 0; r < rm.length; r++) {
+          if (rm[r].getAttribute("data-rm-bound")) continue;
+          rm[r].setAttribute("data-rm-bound", "1");
+          rm[r].addEventListener("click", (function (designId) {
+            return function () {
+              removeParts(designId);
+            };
+          })(line.id));
+        }
       }
       var host = el.querySelector(".cart-item-info-container") || el;
       host.appendChild(box);
     }
+  }
+
+  /** saca del carrito, de a uno, los agregados de un diseño cuyo placard se quitó */
+  function removeParts(designId) {
+    var lines = store.get(LINES_KEY) || {};
+    var ids = Object.keys(lines).filter(function (k) {
+      return lines[k].id === designId && lines[k].role === "item";
+    });
+    var next = function () {
+      var id = ids.shift();
+      if (!id) return;
+      var el = document.querySelector('.js-cart-item[data-item-id="' + id + '"]');
+      var btn = el && el.querySelector(".js-cart-item-remove");
+      if (btn) {
+        // el tema pide confirmación al quitar: acá ya la dio al quitar el placard
+        var ask = window.confirm;
+        window.confirm = function () {
+          return true;
+        };
+        btn.click();
+        window.confirm = ask;
+      }
+      delete lines[id];
+      store.set(LINES_KEY, lines);
+      setTimeout(next, 1400);
+    };
+    setTimeout(next, 1600);
+  }
+
+  /* ---------- 4. los agregados existen en la tienda, pero no se venden sueltos ---------- */
+
+  var CATALOG_KEY = "rm.catalog.v2";
+
+  /** saca de los listados las tarjetas de los agregados y manda sus fichas al placard */
+  function hideParts(products) {
+    if (!products || !products.items) return;
+    var ids = Object.keys(products.items).map(function (k) {
+      return String(products.items[k]);
+    });
+    if (!ids.length) return;
+    if (!document.getElementById("rm-hide-parts")) {
+      var st = document.createElement("style");
+      st.id = "rm-hide-parts";
+      st.textContent = ids
+        .map(function (id) {
+          return '[data-product-id="' + id + '"]:not(.js-cart-item)';
+        })
+        .join(",") + "{display:none!important}";
+      document.head.appendChild(st);
+    }
+    // la celda de la grilla que contenía solo esa tarjeta tampoco tiene que ocupar lugar
+    ids.forEach(function (id) {
+      var cards = document.querySelectorAll('[data-product-id="' + id + '"]');
+      for (var i = 0; i < cards.length; i++) {
+        var cell = cards[i].parentNode;
+        if (cell && cell.children.length === 1 && cell !== document.body && !cell.classList.contains("js-product-table")) cell.style.display = "none";
+      }
+    });
+    var here = window.LS && LS.product && String(LS.product.id);
+    if (here && ids.indexOf(here) >= 0 && products.url) location.replace(products.url);
+  }
+
+  function loadCatalog() {
+    var cached = store.get(CATALOG_KEY);
+    if (cached && cached.products) hideParts(cached.products);
+    if (cached && Date.now() - cached.at < 10 * 60 * 1000) return;
+    fetch(BASE + "/api/tn/catalog")
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (c) {
+        store.set(CATALOG_KEY, { products: c.products, at: Date.now() });
+        hideParts(c.products);
+      })
+      .catch(function () {});
   }
 
   /* ---------- 2. agregar al carrito de la tienda ---------- */
@@ -165,6 +256,8 @@
           saved.properties.forEach(function (p) {
             fields.push(["properties[" + p.name + "]", p.value]);
           });
+          // para la carpintería: el plano y el despiece de este diseño
+          if (msg.sheetUrl) fields.push(["properties[Hoja de taller]", msg.sheetUrl]);
         } else {
           var id = saved.products && saved.products.items && saved.products.items[line.key];
           if (!id) throw new Error("producto sin vincular: " + line.key);
@@ -174,7 +267,7 @@
           last = j;
           lines[j.item.id] =
             line.kind === "placard"
-              ? { id: saved.id, role: "main", properties: saved.properties, price: saved.price, snapshotUrl: msg.snapshotUrl, viewUrl: msg.viewUrl, at: Date.now() }
+              ? { id: saved.id, role: "main", properties: saved.properties, price: saved.price, snapshotUrl: msg.snapshotUrl, viewUrl: msg.viewUrl, sheetUrl: msg.sheetUrl, at: Date.now() }
               : { id: saved.id, role: "item", detail: line.detail, at: Date.now() };
           store.set(LINES_KEY, lines);
         });
@@ -212,7 +305,7 @@
     decorate();
   }
 
-  function done(saved, productName) {
+  function done(saved, productName, sheetUrl) {
     var old = document.querySelector(".rm-done");
     if (old) old.remove();
     var wrap = document.createElement("div");
@@ -236,6 +329,7 @@
       "</div>" +
       "<div class='rm-total'><span>Total de demostración</span><span>" + money(saved.price) + "</span></div>" +
       "<p class='rm-note' style='margin:10px 0 0'>" + esc(DISCLAIMER) + "</p>" +
+      (sheetUrl ? "<p style='margin:12px 0 0;font-size:13px'><a target='_blank' rel='noopener' style='text-decoration:underline' href='" + esc(sheetUrl) + "'>Ver la hoja de taller de este diseño</a> (plano, medidas y despiece)</p>" : "") +
       "<div class='rm-btns'><button type='button' class='rm-ghost' data-rm-close>Seguir diseñando</button><a class='rm-primary' href='/comprar/'>Ver carrito</a></div>" +
       "</div>";
     wrap.addEventListener("click", function (e) {
@@ -351,7 +445,7 @@
           .then(function () {
             busy(false);
             say("added", { ok: true, message: "Listo: agregamos tu placard al carrito (diseño " + d.saved.id + ")." });
-            done(d.saved, product.name || "Placard a medida");
+            done(d.saved, product.name || "Placard a medida", d.sheetUrl);
           })
           .catch(function () {
             busy(false);
@@ -366,6 +460,7 @@
     if (anchor && !document.getElementById("rm-configurator")) mount(anchor);
     css();
     decorate();
+    loadCatalog();
     // el tema vuelve a dibujar el carrito cada vez que cambia
     var pending = null;
     new MutationObserver(function () {
@@ -373,6 +468,8 @@
       pending = setTimeout(function () {
         pending = null;
         decorate();
+        var c = store.get(CATALOG_KEY);
+        if (c) hideParts(c.products);
       }, 120);
     }).observe(document.body, { childList: true, subtree: true });
   }

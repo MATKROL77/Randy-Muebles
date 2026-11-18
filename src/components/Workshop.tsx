@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { DoorsElevation, InteriorElevation } from "@/components/ElevationDrawing";
 import { PieceDrawing } from "@/components/PieceDrawing";
 import { Watermark } from "@/components/Watermark";
 import { catalog } from "@/lib/catalog";
@@ -18,22 +19,34 @@ import { decodeConfig, encodeConfig } from "@/lib/share";
  * seccionadora, plano de cada placa, herrajes y la cuenta de costo y margen.
  * En la versión para un taller real esta vista va detrás de su usuario.
  */
-export default function Workshop() {
-  const [config, setConfig] = useState<WardrobeConfig>(DEFAULT_CONFIG);
+/** la hoja de un diseño guardado desde la tienda: su código, su imagen y el precio validado */
+export type WorkshopSheet = {
+  id: string;
+  createdAt: string;
+  snapshot: string | null;
+  price: number;
+  lines: { name: string; detail: string; qty: number; unit: number; total: number }[];
+  properties: { name: string; value: string }[];
+};
+
+export default function Workshop({ config: given, sheet }: { config?: WardrobeConfig; sheet?: WorkshopSheet } = {}) {
+  const [config, setConfig] = useState<WardrobeConfig>(given ?? DEFAULT_CONFIG);
   useEffect(() => {
+    if (given) return;
     const fromUrl = decodeConfig(new URLSearchParams(currentQuery()).get("c"));
     if (fromUrl) setConfig(fromUrl);
-  }, []);
+  }, [given]);
 
   const q = useMemo(() => quote(config), [config]);
   const [making, setMaking] = useState(false);
   const downloadPdf = async () => {
     setMaking(true);
     try {
-      const pdf = await buildOrderPdf(config, q);
+      const snapshot = sheet?.snapshot ? await fetch(sheet.snapshot).then((r) => r.blob()).then((b) => new Promise<string | null>((done) => { const f = new FileReader(); f.onload = () => done(String(f.result)); f.onerror = () => done(null); f.readAsDataURL(b); })).catch(() => null) : null;
+      const pdf = await buildOrderPdf(config, q, snapshot);
       const a = document.createElement("a");
       a.href = URL.createObjectURL(pdf.blob);
-      a.download = `orden-${catalog.brand.name.toLowerCase().replace(/\s+/g, "-")}.pdf`;
+      a.download = sheet ? `hoja-de-taller-${sheet.id}.pdf` : `orden-${catalog.brand.name.toLowerCase().replace(/\s+/g, "-")}.pdf`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 2000);
     } finally {
@@ -67,14 +80,25 @@ export default function Workshop() {
       <Watermark fixed />
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="eyebrow">Orden de producción · {catalog.brand.name}</p>
-          <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight">Placard a medida</h1>
-          <p className="mt-1 text-ink-2">{summary}</p>
+          <p className="eyebrow">{sheet ? "Hoja de taller" : "Orden de producción"} · {catalog.brand.name}</p>
+          <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight">
+            Placard a medida{sheet && <span className="ml-3 rounded-full bg-ink px-3 py-1 align-middle font-sans text-base font-medium tracking-wide text-on-dark" data-rm="sheet-id">{sheet.id}</span>}
+          </h1>
+          <p className="mt-1 text-ink-2">
+            {summary}
+            {sheet && ` · diseñado el ${new Date(sheet.createdAt).toLocaleDateString("es-AR")}`}
+          </p>
         </div>
         <div className="no-print flex flex-wrap gap-2">
-          <Link href={`/demo/?c=${encodeConfig(config)}`} className="btn btn-ghost text-sm">
-            ← Volver al diseño
-          </Link>
+          {sheet ? (
+            <a href={`/tn/?id=${sheet.id}`} className="btn btn-ghost text-sm">
+              Ver en 3D
+            </a>
+          ) : (
+            <Link href={`/demo/?c=${encodeConfig(config)}`} className="btn btn-ghost text-sm">
+              ← Volver al diseño
+            </Link>
+          )}
           <button type="button" onClick={downloadCsv} className="btn btn-ghost text-sm">
             Descargar CSV
           </button>
@@ -87,13 +111,74 @@ export default function Workshop() {
         </div>
       </header>
 
-      {catalog.brand.samplePricing && (
+      {sheet && (
+        <>
+          <section className="grid gap-4 lg:grid-cols-2">
+            {sheet.snapshot && (
+              <figure className="card overflow-hidden">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={sheet.snapshot} alt="El diseño tal como lo vio el cliente" className="aspect-[4/3] w-full object-cover" />
+                <figcaption className="px-5 py-3 text-xs text-ink-2">Así lo vio el cliente al agregarlo al carrito.</figcaption>
+              </figure>
+            )}
+            <div className="card p-5">
+              <h2 className="font-display text-lg font-semibold">Lo que pidió</h2>
+              <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
+                {sheet.properties.map((p) => (
+                  <div key={p.name} className="contents">
+                    <dt className="text-ink-2">{p.name}</dt>
+                    <dd>{p.value}</dd>
+                  </div>
+                ))}
+              </dl>
+              <h3 className="mt-5 text-sm font-semibold">Precio validado (demostración)</h3>
+              <ul className="mt-2 space-y-1.5 text-sm">
+                {sheet.lines.map((l) => (
+                  <li key={l.name} className="flex justify-between gap-3">
+                    <span>
+                      {l.qty > 1 ? `${l.qty} × ` : ""}
+                      {l.name}
+                    </span>
+                    <span className="tabular-nums">{money(l.total)}</span>
+                  </li>
+                ))}
+                <li className="flex justify-between gap-3 border-t border-line pt-2 font-semibold">
+                  <span>Total</span>
+                  <span className="tabular-nums">{money(sheet.price)}</span>
+                </li>
+              </ul>
+            </div>
+          </section>
+
+          <section className="card p-5" data-rm="elevation">
+            <h2 className="font-display text-lg font-semibold">Plano del interior</h2>
+            <p className="mt-1 text-xs text-ink-2">Vista de frente sin las hojas: qué va en cada módulo y a qué altura.</p>
+            <div className="mt-4">
+              <InteriorElevation config={config} assembly={q.assembly} />
+            </div>
+          </section>
+
+          <section className="card p-5">
+            <h2 className="font-display text-lg font-semibold">Hojas corredizas</h2>
+            <p className="mt-1 text-xs text-ink-2">Vista de frente: el frente y la terminación de cada hoja, y en qué riel corre.</p>
+            <div className="mx-auto mt-4 max-w-3xl">
+              <DoorsElevation config={config} assembly={q.assembly} />
+            </div>
+          </section>
+
+          <p className="rounded-xl bg-accent-soft px-4 py-3 text-sm text-accent-strong">
+            Demostración: reglas de fabricación, medidas de corte, herrajes y precios son ilustrativos hasta que el comercio cargue los suyos.
+          </p>
+        </>
+      )}
+
+      {!sheet && catalog.brand.samplePricing && (
         <p className="no-print rounded-xl bg-accent-soft px-4 py-3 text-sm text-accent-strong">
           Precios orientativos de muestra. Cada fabricante debe cargar y validar su propia lista de costos.
         </p>
       )}
 
-      <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <section className={`grid grid-cols-2 gap-3 md:grid-cols-4 ${sheet ? "hidden" : ""}`}>
         <Stat label="Precio al cliente" value={money(q.price)} />
         <Stat label="Costo" value={money(q.cost)} />
         <Stat label="Margen" value={money(margin)} note={`${Math.round((margin / q.price) * 100)} % del precio`} />
@@ -158,7 +243,7 @@ export default function Workshop() {
           </ul>
         </section>
 
-        <section className="card overflow-hidden">
+        <section className={`card overflow-hidden ${sheet ? "hidden" : ""}`}>
           <h2 className="border-b border-line px-5 py-4 font-display text-lg font-semibold">Costos</h2>
           <ul className="divide-y divide-line text-sm">
             {q.costs.map((c) => (
@@ -189,7 +274,8 @@ export default function Workshop() {
                 </span>{" "}
                 {LAYOUT_LABELS[m.layout]}
                 {m.drawers > 0 && `, ${m.drawers} cajones`}
-                {(m.layout === "shelves" || m.layout === "drawers-shelves") && `, ${m.shelves} estantes`}
+                {(m.layout === "shelves" || m.layout === "drawers-shelves") && `, ${m.shelves - m.trays} estantes`}
+                {m.trays > 0 && `, ${m.trays} bandejas extraíbles`}
                 {(m.ledShelves || m.ledSides) && ", con luz"}
               </li>
             )),

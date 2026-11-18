@@ -848,7 +848,12 @@ function ViewZoom({ zoom }: { zoom?: { current: number } }) {
 export const STUDIO_HDRI = "/env/studio_small_09-1k.hdr";
 
 function SceneContents(props: ViewerProps & { hq: boolean; bus: PhotoBus; photoOn: boolean; mobile: boolean; awake: boolean; still: boolean; onStill: (still: boolean) => void }) {
-  const kit = useMemo(() => createKit(props.config.bodyMaterial, props.config.doorMaterial, props.fabric, props.weave), [props.config.bodyMaterial, props.config.doorMaterial, props.fabric, props.weave]);
+  // las terminaciones propias de alguna hoja, en una clave estable: el juego de materiales solo cambia si cambian ellas
+  const leafKey = [...new Set((props.config.leaves ?? []).map((l) => l?.material).filter((id): id is string => !!id))].sort().join(",");
+  const kit = useMemo(
+    () => createKit(props.config.bodyMaterial, props.config.doorMaterial, props.fabric, props.weave, leafKey ? leafKey.split(",") : []),
+    [props.config.bodyMaterial, props.config.doorMaterial, props.fabric, props.weave, leafKey],
+  );
   useEffect(() => () => disposeKit(kit), [kit]);
   const { min, max } = props.assembly.bounds;
   const span = Math.max(max[0] - min[0], max[2] - min[2], max[1]);

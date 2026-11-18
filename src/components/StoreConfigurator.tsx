@@ -107,7 +107,7 @@ export default function StoreConfigurator() {
           }
         }, 25_000);
       });
-      tell("add", { saved, snapshotUrl: saved.hasSnapshot ? `${window.location.origin}/api/tn/configs/${saved.id}/snapshot` : null, viewUrl: `${window.location.origin}/tn/?id=${saved.id}` });
+      tell("add", { saved, snapshotUrl: saved.hasSnapshot ? `${window.location.origin}/api/tn/configs/${saved.id}/snapshot` : null, viewUrl: `${window.location.origin}/tn/?id=${saved.id}`, sheetUrl: `${window.location.origin}/tn/taller/?id=${saved.id}` });
       return answer;
     },
   };

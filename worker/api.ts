@@ -14,12 +14,12 @@ export type Env = {
   ALLOWED_ORIGINS?: string;
   /**
    * Los productos de la tienda, en JSON:
-   * { "placard": "<id del producto Placard a medida>", "items": { "cajon": "<id>", ... } }
+   * { "placard": "<id del producto Placard a medida>", "url": "/productos/<su dirección>/", "items": { "cajon": "<id>", ... } }
    */
   TN_PRODUCTS?: string;
 };
 
-export type StoreProducts = { placard: string | null; items: Partial<Record<ItemKey, string>> };
+export type StoreProducts = { placard: string | null; /** dirección de la ficha del placard en la tienda */ url: string | null; items: Partial<Record<ItemKey, string>> };
 
 export type SavedConfig = {
   id: string;
@@ -61,9 +61,9 @@ const json = (body: unknown, status: number, headers: Record<string, string>) =>
 export function storeProducts(env: Env): StoreProducts {
   try {
     const v = JSON.parse(env.TN_PRODUCTS ?? "{}") as Partial<StoreProducts> | null;
-    return { placard: v?.placard ? String(v.placard) : null, items: v?.items && typeof v.items === "object" ? v.items : {} };
+    return { placard: v?.placard ? String(v.placard) : null, url: typeof v?.url === "string" ? v.url : null, items: v?.items && typeof v.items === "object" ? v.items : {} };
   } catch {
-    return { placard: null, items: {} };
+    return { placard: null, url: null, items: {} };
   }
 }
 
