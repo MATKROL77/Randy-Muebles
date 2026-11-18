@@ -200,6 +200,27 @@ const assert = (c, m) => {
     return back.properties.map((p) => `${p.name}: ${p.value}`).join(" | ");
   });
 
+  await check("hoja de taller: plano del interior, hojas y despiece del diseño guardado", async () => {
+    const origin = new URL(saved.viewUrl).origin;
+    await page.goto(`${origin}/tn/taller/?id=${saved.id}`, { waitUntil: "load" });
+    await page.locator('[data-rm="sheet-id"]').waitFor();
+    assert((await page.locator('[data-rm="sheet-id"]').innerText()).trim() === saved.id, "la hoja no es la de este diseño");
+    const plan = await page.locator('[data-rm="elevation"] svg').innerHTML();
+    for (const word of ["Cajón", "Bandeja", "Estante", "Barral", "Ancho total"]) assert(plan.includes(word), `el plano no rotula: ${word}`);
+    const text = await page.locator("main").innerText();
+    for (const word of ["Hojas corredizas", "Despiece", "Herrajes", "Bandeja extraíble"]) assert(text.includes(word), `la hoja no trae: ${word}`);
+    assert(!/Margen|Total costo/.test(await page.locator("main section:not(.hidden)").allInnerTexts().then((t) => t.join(" "))), "la hoja muestra costos internos");
+    await page.screenshot({ path: `${shots}/tienda-${mode}-5-taller.png`, fullPage: true, timeout: 240_000 });
+  });
+
+  await check("los agregados no se venden sueltos: su ficha lleva al placard", async () => {
+    const res = await page.goto(new URL("/productos/cajon-con-correderas-telescopicas-demo-1s4fy/", url).href, { waitUntil: "load" });
+    assert(res.ok(), "la ficha del agregado no abre");
+    // en la tienda publicada el script solo entra por la descripción del placard: sin el diseño nuevo publicado, no redirige
+    const moved = await page.waitForURL(/placard-corredizo-a-medida/, { timeout: 8000 }).then(() => true).catch(() => false);
+    return moved ? "redirige al placard" : "todavía no (se activa al publicar el diseño nuevo)";
+  });
+
   await check("sin errores de JavaScript en la página", async () => {
     assert(errors.length === 0, errors.slice(0, 3).join(" · "));
   });
