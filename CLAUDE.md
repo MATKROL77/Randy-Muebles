@@ -1,28 +1,28 @@
 # Contexto del proyecto
 
-**MEDIDA**: configuradores 3D de productos a medida para fabricantes, de
-**Matías Colimodio** (matiascolimodio@gmail.com), estudiante de Ingeniería
-Mecánica en Pilar, Buenos Aires. Este repositorio es solo MEDIDA; viene de la
-carpeta `configurador/` de `MATKROL77/Investig`, migrada con su historial.
+**Configurador 3D de placares para Randy Muebles (DEMO)**, integrado en una
+tienda Tiendanube de prueba. Es una propuesta privada de Matías Colimodio;
+no es un producto oficial de Randy Muebles. Nace de **MEDIDA**
+(`MATKROL77/MEDIDA`), cuyo motor reutiliza; MEDIDA sigue en su repositorio y
+este proyecto no lo toca.
 
-Next.js 15 + TypeScript + Tailwind v4 + react-three-fiber, export estático,
-publicado en Cloudflare Workers. Leé el `README.md` antes de tocar código y
-`MEDIDA_ESTADO.md` para saber qué está verificado y qué falta.
+Next.js 15 + TypeScript + Tailwind v4 + react-three-fiber (export estático) y
+un Worker de Cloudflare. Leé el `README.md` antes de tocar código.
 
 ## Reglas
 
-- **No se inventan datos.** Ni clientes, ni testimonios, ni métricas, ni
-  ahorros. Los precios de muestra están marcados como orientativos. La marca es
-  MEDIDA y no lleva rótulo ni marca de agua DEMO; MEDIDA identifica al software
-  y no representa a un fabricante de muebles.
-- **No se presenta como terminado lo que no existe.** Lo que está en desarrollo
-  se dice. Nada de funciones simuladas que aparenten andar.
-- Español rioplatense, con voseo hacia el visitante.
+- **Todo lo comercial es DEMO.** Modelos, colores, precios y reglas de
+  fabricación son ilustrativos hasta que el comercio pase los suyos, y la
+  leyenda de demostración se ve siempre.
+- **No se presenta como terminado lo que no existe**, ni se simula como real
+  una integración que no anda. Lo que falta se dice (ver "Límites" en el README).
+- **El precio lo pone el servidor.** El navegador nunca manda un precio que se
+  use: el Worker vuelve a validar y cotizar con el mismo motor.
 - Lo que se ve en 3D y el despiece salen de `buildAssembly`: no dibujar piezas
   que no estén en el despiece ni al revés.
-- Las tipografías se sirven locales (`next/font/local`): el build no sale a
-  internet.
-- No se guardan claves ni credenciales en Git.
+- Español rioplatense, con voseo.
+- No se guardan claves ni credenciales en Git. No se tocan la tienda real de
+  Randy ni el Worker `medida`.
 
 ## Antes de dar algo por terminado
 
@@ -33,5 +33,5 @@ npm run lint
 npm run build
 ```
 
-Si tocaste algo visual, verificalo en el navegador a 390 px y a 1440 px, sin
-scroll horizontal.
+Si tocaste algo visual, verificalo a 390 px y a 1440 px, y corré
+`node scripts/e2e-tienda.cjs desktop` y `mobile` contra la tienda.

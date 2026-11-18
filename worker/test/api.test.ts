@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { handle, type Env } from "../api.ts";
-import { MODELS, basePrice, demoQuote, enforce, initialConfig } from "../../src/lib/randy.ts";
+import { MODELS, RULES, basePrice, demoQuote, enforce, initialConfig, modulesFor, withModules } from "../../src/lib/randy.ts";
 import { quote } from "../../src/lib/quote.ts";
 
 function env(): Env & { data: Map<string, string> } {
@@ -26,7 +26,8 @@ test("catálogo: cada modelo arranca dentro de sus límites y con corredizas", (
     assert.equal(c.doors, "sliding");
     assert.equal(c.shape, "straight");
     assert.equal(c.runs[0].modules.length, m.leaves);
-    assert.ok(c.runs[0].width >= m.width.min && c.runs[0].width <= m.width.max);
+    assert.ok(c.runs[0].width >= RULES.width.min && c.runs[0].width <= RULES.width.max);
+    for (const mod of c.runs[0].modules) assert.ok(mod.width >= RULES.module.min - 0.5);
     assert.ok(basePrice(m) > 0 && basePrice(m) <= demoQuote(m, c).price);
   }
 });
@@ -47,8 +48,8 @@ test("validación: una configuración imposible se corrige del lado del servidor
   const b = (await r.json()) as { config: ReturnType<typeof initialConfig>; price: number };
   assert.equal(b.config.doors, "sliding");
   assert.equal(b.config.shape, "straight");
-  assert.equal(b.config.runs[0].width, 2000);
-  assert.equal(b.config.runs[0].modules.length, 2);
+  assert.equal(b.config.runs[0].width, 3000);
+  assert.ok(b.config.runs[0].modules.length >= 3 && b.config.runs[0].modules.every((x: { width: number }) => x.width >= 599.5));
   assert.ok(b.config.height <= 2500 && b.config.depth >= 450);
   for (const mod of b.config.runs[0].modules) assert.ok(mod.shelves <= 6 && mod.drawers <= 4 && mod.trays <= 3 && mod.trays <= mod.shelves);
 });
@@ -127,4 +128,30 @@ test("sitio: cada ruta encuentra su archivo y lo que no existe da 404", async ()
   const js = await serveSite(new Request("https://rm.example/tn/embed.js"), store);
   assert.equal(js.headers.get("Access-Control-Allow-Origin"), "*");
   assert.equal((await serveSite(new Request("https://rm.example/no-existe"), store)).status, 404);
+});
+
+test("reglas: módulos de 60 cm como mínimo, hasta 3 m de ancho, y se suman los que entran", () => {
+  const m = MODELS[0];
+  // contando las placas (18 mm cada una), en 3 m entran cuatro módulos de 60 cm y el quinto no
+  assert.ok(modulesFor(3000).includes(4) && !modulesFor(3000).includes(5));
+  assert.equal(4 * 600 + 5 * 18, 2490);
+  let c = initialConfig(m);
+  for (let n = 3; n <= 7; n++) c = withModules(m, c, n);
+  assert.equal(c.runs[0].modules.length, 4);
+  assert.ok(c.runs[0].width <= 3000);
+  // el ancho total es la suma de los interiores más las placas verticales
+  const sum = c.runs[0].modules.reduce((s, x) => s + x.width, 0) + (c.runs[0].modules.length + 1) * 18;
+  assert.ok(Math.abs(sum - c.runs[0].width) < 1, `interiores + placas = ${sum}, ancho = ${c.runs[0].width}`);
+  // cualquier ancho del rango se arma, y ningún módulo queda por debajo de 60 cm
+  for (let w = RULES.width.min; w <= RULES.width.max; w += 10) {
+    assert.ok(modulesFor(w).length > 0, `sin módulos para ${w} mm`);
+    const fit = enforce(m, { runs: [{ width: w, modules: c.runs[0].modules }] });
+    assert.equal(fit.runs[0].width, w);
+    for (const mod of fit.runs[0].modules) assert.ok(mod.width >= 599.5, `ancho ${w}: módulo de ${mod.width} mm`);
+  }
+  // por debajo del mínimo no se acepta: el servidor lo lleva al ancho mínimo
+  assert.equal(enforce(m, { runs: [{ width: 500, modules: [] }] }).runs[0].width, RULES.width.min);
+  // sacar módulos achica el placard, nunca por debajo de dos
+  for (let n = 3; n >= 0; n--) c = withModules(m, c, n);
+  assert.equal(c.runs[0].modules.length, 2);
 });

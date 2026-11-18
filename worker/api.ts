@@ -1,4 +1,4 @@
-import { DISCLAIMER, EXTRA_UNIT, MODELS, basePrice, configProperties, demoQuote, enforce, modelById } from "../src/lib/randy.ts";
+import { DISCLAIMER, EXTRA_UNIT, MODELS, RULES, basePrice, configProperties, demoQuote, enforce, modelById } from "../src/lib/randy.ts";
 
 /** lo mínimo de un KV: así las pruebas usan un Map */
 export type Store = {
@@ -95,6 +95,7 @@ export async function handle(request: Request, env: Env): Promise<Response> {
           extraUnit: EXTRA_UNIT,
           extrasProductId: env.TN_EXTRAS_PRODUCT_ID ?? null,
           products: productModels(env),
+          rules: RULES,
           models: MODELS.map((m) => ({ id: m.id, name: m.name, leaves: m.leaves, width: m.width, basePrice: basePrice(m) })),
         },
         200,

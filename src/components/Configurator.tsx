@@ -110,8 +110,8 @@ export type StoreMode = {
   fit?: (config: WardrobeConfig) => WardrobeConfig;
   /** rango de ancho del modelo, en mm */
   width?: { min: number; max: number };
-  /** la cantidad de módulos (hojas) la fija el modelo */
-  lockModules?: boolean;
+  /** sumar o sacar módulos (cada uno con su hoja): el ancho total acompaña */
+  modules?: { min: number; max: number; set: (config: WardrobeConfig, count: number) => WardrobeConfig };
   /** para que la tienda dispare "Agregar al carrito" desde su propio botón */
   addRef?: React.MutableRefObject<(() => void) | null>;
 };
@@ -673,7 +673,19 @@ export default function Configurator({ workshop = null, initial, onInquiry, stor
               )}
 
               <Section title="Módulos" hint="Tocá un módulo en el 3D para editarlo">
-                {!store?.lockModules && (
+                {store?.modules && (
+                  <Stepper
+                    label="Cantidad de módulos"
+                    value={run.modules.length}
+                    min={store.modules.min}
+                    max={store.modules.max}
+                    onChange={(c) => {
+                      setConfig((cur) => store.modules!.set(cur, c));
+                      setSelection((s) => ({ ...s, module: Math.min(s.module, c - 1) }));
+                    }}
+                  />
+                )}
+                {!store?.modules && (
                   <Segmented
                     value={run.modules.length}
                     options={counts.map((c) => ({ id: c, label: c }))}

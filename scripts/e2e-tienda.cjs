@@ -7,6 +7,7 @@
  *
  * Solo agrega al carrito de una sesión nueva: no compra nada.
  */
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { chromium, devices } = require("playwright");
 
 const mode = process.argv[2] === "mobile" ? "mobile" : "desktop";
@@ -102,6 +103,16 @@ const assert = (c, m) => {
     await frame.getByRole("button", { name: "Más estantes" }).click({ force: true });
     await frame.getByRole("button", { name: "Más bandejas extraíbles" }).click({ force: true });
     await page.waitForTimeout(800);
+  });
+
+  await check("sumar un módulo: el ancho acompaña y ningún módulo baja de 60 cm", async () => {
+    await frame.getByRole("button", { name: "Más cantidad de módulos" }).click({ force: true });
+    await page.waitForTimeout(1500);
+    const cards = await frame.locator("button.option-card span.tabular-nums").allInnerTexts();
+    const widths = cards.map((t) => Number(t.replace(/[^\d]/g, ""))).filter(Boolean);
+    assert(widths.length === 3, `módulos: ${widths.length}`);
+    assert(widths.every((w) => w >= 60), `anchos de módulo: ${widths.join(", ")} cm`);
+    return `3 módulos de ${widths.join(", ")} cm`;
   });
 
   await check("8. cambiar colores", async () => {

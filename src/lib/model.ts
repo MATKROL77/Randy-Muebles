@@ -100,6 +100,20 @@ export const CORNER_DOOR_MIN = 300;
  * tiene que medir por dentro al menos esto.
  */
 export const SLIDING_MODULE_MIN = 480;
+/** el mínimo de módulo con corredizas que rige ahora: un fabricante puede cambiarlo (`configureLimits`) */
+const tuning = { slidingModuleMin: SLIDING_MODULE_MIN };
+
+/**
+ * Reglas de fabricación propias de un comercio: ancho total, ancho máximo de
+ * módulo y hoja corrediza mínima. Se aplican una vez, antes de dibujar o cotizar.
+ */
+export function configureLimits(o: { widthMin?: number; widthMax?: number; moduleMax?: number; slidingModuleMin?: number }) {
+  const l = LIMITS as unknown as { width: { min: number; max: number }; moduleInner: { min: number; max: number } };
+  if (o.widthMin) l.width.min = o.widthMin;
+  if (o.widthMax) l.width.max = o.widthMax;
+  if (o.moduleMax) l.moduleInner.max = o.moduleMax;
+  if (o.slidingModuleMin) tuning.slidingModuleMin = o.slidingModuleMin;
+}
 
 export const LAYOUT_LABELS: Record<Layout, string> = {
   shelves: "Estantes",
@@ -205,9 +219,9 @@ export function moduleMin(config: Pick<WardrobeConfig, "shape" | "depth" | "door
   const sliding = config.doors === "sliding";
   if (run === 0 && cornerModule(config.shape, count) === index) {
     // la parte que queda a la vista al lado del panel ciego lleva su puerta u hoja
-    return Math.max(LIMITS.moduleInner.min, config.depth + (sliding ? SLIDING_MODULE_MIN : CORNER_DOOR_MIN));
+    return Math.max(LIMITS.moduleInner.min, config.depth + (sliding ? tuning.slidingModuleMin : CORNER_DOOR_MIN));
   }
-  return sliding ? SLIDING_MODULE_MIN : LIMITS.moduleInner.min;
+  return sliding ? tuning.slidingModuleMin : LIMITS.moduleInner.min;
 }
 
 /** suma de anchos interiores disponible para los módulos de un tramo */

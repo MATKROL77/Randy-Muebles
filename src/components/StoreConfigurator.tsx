@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import Configurator, { type StoreMode } from "@/components/Configurator";
 import type { WardrobeConfig } from "@/lib/model";
-import { BRAND, DISCLAIMER, MODELS, basePrice, demoQuote, enforce, initialConfig, modelById, setupCatalog, type RandyModel } from "@/lib/randy";
+import { BRAND, DISCLAIMER, MODELS, RULES, withModules, basePrice, demoQuote, enforce, initialConfig, modelById, setupCatalog, type RandyModel } from "@/lib/randy";
 import { decodeConfig, encodeConfig } from "@/lib/share";
 
 /** lo que el servidor devuelve al guardar una configuración */
@@ -79,8 +79,8 @@ export default function StoreConfigurator() {
   const store: StoreMode = {
     disclaimer: DISCLAIMER,
     fit: (c) => enforce(model, c),
-    width: model.width,
-    lockModules: true,
+    width: RULES.width,
+    modules: { ...RULES.modules, set: (c, n) => withModules(model, c, n) },
     addRef,
     onChange: (config) => {
       const q = demoQuote(model, config);
