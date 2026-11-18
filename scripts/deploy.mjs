@@ -6,8 +6,13 @@
  *
  * Necesita CLOUDFLARE_API_TOKEN y CLOUDFLARE_ACCOUNT_ID en el entorno. No
  * guarda ni imprime la clave.
+ *
+ * Solo sube los archivos que cambiaron desde la publicación anterior: el plan
+ * gratuito de KV admite 1.000 escrituras por día y el sitio tiene unos cien
+ * archivos, así que reescribirlo entero en cada publicación agota el cupo.
  */
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { extname, join, relative } from "node:path";
 
@@ -44,15 +49,28 @@ const TYPES = {
 };
 
 const walk = (dir) => readdirSync(dir).flatMap((name) => (statSync(join(dir, name)).isDirectory() ? walk(join(dir, name)) : [join(dir, name)]));
-const files = walk("out").map((file) => ({
-  key: `site:/${relative("out", file).split("\\").join("/")}`,
-  value: readFileSync(file).toString("base64"),
-  base64: true,
-  metadata: { type: TYPES[extname(file).toLowerCase()] ?? "application/octet-stream" },
-}));
+const all = walk("out").map((file) => {
+  const bytes = readFileSync(file);
+  return {
+    key: `site:/${relative("out", file).split("\\").join("/")}`,
+    value: bytes.toString("base64"),
+    base64: true,
+    metadata: { type: TYPES[extname(file).toLowerCase()] ?? "application/octet-stream" },
+    hash: createHash("sha1").update(bytes).digest("hex"),
+  };
+});
+
+// qué se publicó la última vez: una sola lectura
+const api = `https://api.cloudflare.com/client/v4/accounts/${account}/storage/kv/namespaces/${namespace}`;
+const MANIFEST = "site:__manifest";
+const previous = await fetch(`${api}/values/${encodeURIComponent(MANIFEST)}`, { headers: { Authorization: `Bearer ${token}` } })
+  .then((r) => (r.ok ? r.json() : {}))
+  .catch(() => ({}));
+const files = all.filter((f) => previous[f.key] !== f.hash).map(({ hash, ...f }) => f);
+console.log(`Sitio: ${all.length} archivos, ${files.length} cambiaron.`);
 
 // KV acepta hasta 100 MB por pedido: se manda en tandas de ~20 MB
-const batches = [[]];
+const batches = files.length ? [[]] : [];
 let size = 0;
 for (const f of files) {
   if (size + f.value.length > 20_000_000 && batches.at(-1).length) {
@@ -63,7 +81,7 @@ for (const f of files) {
   size += f.value.length;
 }
 for (const [i, batch] of batches.entries()) {
-  const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/storage/kv/namespaces/${namespace}/bulk`, {
+  const res = await fetch(`${api}/bulk`, {
     method: "PUT",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify(batch),
@@ -75,6 +93,16 @@ for (const [i, batch] of batches.entries()) {
   }
   console.log(`Sitio: tanda ${i + 1}/${batches.length} (${batch.length} archivos)`);
 }
-console.log(`Sitio: ${files.length} archivos en la base de ${env}.`);
+if (files.length) {
+  // el registro de lo publicado, para la próxima vez
+  const manifest = Object.fromEntries(all.map((f) => [f.key, f.hash]));
+  const res = await fetch(`${api}/bulk`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify([{ key: MANIFEST, value: JSON.stringify(manifest) }]),
+  });
+  if (!res.ok) console.error("No se pudo guardar el registro de lo publicado:", res.status);
+}
+console.log(`Sitio: ${files.length} archivos subidos a la base de ${env}.`);
 
 execFileSync("npx", ["wrangler", "deploy", "--env", env], { stdio: "inherit" });
