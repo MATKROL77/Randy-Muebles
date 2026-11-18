@@ -214,7 +214,7 @@ const assert = (c, m) => {
   });
 
   await check("los agregados no se venden sueltos: su ficha lleva al placard", async () => {
-    const res = await page.goto(new URL("/productos/cajon-con-correderas-telescopicas-demo-1s4fy/", url).href, { waitUntil: "load" });
+    const res = await page.goto(new URL("/productos/cajon-con-correderas-telescopicas-demo-qg1bb/", url).href, { waitUntil: "load" });
     assert(res.ok(), "la ficha del agregado no abre");
     // en la tienda publicada el script solo entra por la descripción del placard: sin el diseño nuevo publicado, no redirige
     const moved = await page.waitForURL(/placard-corredizo-a-medida/, { timeout: 8000 }).then(() => true).catch(() => false);

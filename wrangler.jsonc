@@ -14,17 +14,17 @@
     "dev": {
       "name": "randy-muebles-configurador-dev",
       "kv_namespaces": [{ "binding": "CONFIGS", "id": "db08074ad1864d77874b05c42b4fda65" }],
-      "vars": { "ENVIRONMENT": "dev", "ALLOWED_ORIGINS": "https://medida3.mitiendanube.com", "TN_PRODUCTS": "{\"placard\":\"382042163\",\"url\":\"/productos/placard-corredizo-a-medida-demo-1rp23/\",\"items\":{\"modulo\":\"382042367\",\"cajon\":\"382042373\",\"bandeja\":\"382042385\",\"estante\":\"382042391\",\"barral\":\"382042400\",\"espejo\":\"382042408\",\"vidrio\":\"382042411\",\"ranurado\":\"382042419\",\"led\":\"382042430\"}}" }
+      "vars": { "ENVIRONMENT": "dev", "ALLOWED_ORIGINS": "https://medida3.mitiendanube.com", "TN_PRODUCTS": "{\"placard\":\"382042163\",\"url\":\"/productos/placard-corredizo-a-medida-demo-1rp23/\",\"items\":{\"modulo\":\"382053881\",\"cajon\":\"382053887\",\"bandeja\":\"382053894\",\"estante\":\"382053898\",\"barral\":\"382053903\",\"espejo\":\"382053908\",\"vidrio\":\"382053911\",\"ranurado\":\"382053921\",\"led\":\"382053927\"}}" }
     },
     "staging": {
       "name": "randy-muebles-configurador-staging",
       "kv_namespaces": [{ "binding": "CONFIGS", "id": "5df13267d0f142a2b483da12ba6f9548" }],
-      "vars": { "ENVIRONMENT": "staging", "ALLOWED_ORIGINS": "https://medida3.mitiendanube.com", "TN_PRODUCTS": "{\"placard\":\"382042163\",\"url\":\"/productos/placard-corredizo-a-medida-demo-1rp23/\",\"items\":{\"modulo\":\"382042367\",\"cajon\":\"382042373\",\"bandeja\":\"382042385\",\"estante\":\"382042391\",\"barral\":\"382042400\",\"espejo\":\"382042408\",\"vidrio\":\"382042411\",\"ranurado\":\"382042419\",\"led\":\"382042430\"}}" }
+      "vars": { "ENVIRONMENT": "staging", "ALLOWED_ORIGINS": "https://medida3.mitiendanube.com", "TN_PRODUCTS": "{\"placard\":\"382042163\",\"url\":\"/productos/placard-corredizo-a-medida-demo-1rp23/\",\"items\":{\"modulo\":\"382053881\",\"cajon\":\"382053887\",\"bandeja\":\"382053894\",\"estante\":\"382053898\",\"barral\":\"382053903\",\"espejo\":\"382053908\",\"vidrio\":\"382053911\",\"ranurado\":\"382053921\",\"led\":\"382053927\"}}" }
     },
     "production": {
       "name": "randy-muebles-configurador",
       "kv_namespaces": [{ "binding": "CONFIGS", "id": "fb81cd04791e4aa5bd7beebf38115942" }],
-      "vars": { "ENVIRONMENT": "production", "ALLOWED_ORIGINS": "https://medida3.mitiendanube.com", "TN_PRODUCTS": "{\"placard\":\"382042163\",\"url\":\"/productos/placard-corredizo-a-medida-demo-1rp23/\",\"items\":{\"modulo\":\"382042367\",\"cajon\":\"382042373\",\"bandeja\":\"382042385\",\"estante\":\"382042391\",\"barral\":\"382042400\",\"espejo\":\"382042408\",\"vidrio\":\"382042411\",\"ranurado\":\"382042419\",\"led\":\"382042430\"}}" }
+      "vars": { "ENVIRONMENT": "production", "ALLOWED_ORIGINS": "https://medida3.mitiendanube.com", "TN_PRODUCTS": "{\"placard\":\"382042163\",\"url\":\"/productos/placard-corredizo-a-medida-demo-1rp23/\",\"items\":{\"modulo\":\"382053881\",\"cajon\":\"382053887\",\"bandeja\":\"382053894\",\"estante\":\"382053898\",\"barral\":\"382053903\",\"espejo\":\"382053908\",\"vidrio\":\"382053911\",\"ranurado\":\"382053921\",\"led\":\"382053927\"}}" }
     }
   }
 }
