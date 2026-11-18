@@ -61,7 +61,7 @@
       ".rm-badge i{width:8px;height:8px;border-radius:50%;background:#2e7d5b;display:inline-block}",
       ".rm-frame{position:relative;border-radius:18px;overflow:hidden;background:#ece5d8;box-shadow:0 1px 0 rgba(0,0,0,.06),0 18px 50px -22px rgba(0,0,0,.35)}",
       ".rm-frame iframe{display:block;width:100%;border:0;height:min(820px,max(620px,calc(100vh - 150px)))}",
-      "@media (max-width:1023px){.rm-wrap{padding:0;margin-bottom:18px}.rm-head{padding:0 14px}.rm-frame{border-radius:0}.rm-frame iframe{height:calc(100vh - 64px);height:calc(100svh - 64px)}}",
+      "@media (max-width:1023px){.rm-wrap{padding:0;margin-bottom:18px;width:100vw;max-width:100vw;margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw)}.rm-head{padding:0 14px}.rm-frame{border-radius:0}.rm-frame iframe{height:calc(100vh - 64px);height:calc(100svh - 64px)}}",
       ".rm-note{font-size:11.5px;line-height:1.45;opacity:.7;margin:10px 2px 0}",
       "@media (max-width:1023px){.rm-note{margin:10px 14px 0}}",
       ".rm-price-label{display:block;font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;opacity:.65;margin-bottom:2px}",
@@ -72,6 +72,7 @@
       ".rm-cfg dl{margin:6px 0 0;display:grid;grid-template-columns:auto 1fr;gap:1px 10px}.rm-cfg dt{opacity:.65}.rm-cfg dd{margin:0}",
       ".rm-cfg a{text-decoration:underline}.rm-cfg img{float:right;width:84px;height:84px;object-fit:cover;border-radius:8px;margin:0 0 6px 10px}",
       ".rm-cfg small{display:block;opacity:.65;margin-top:6px}",
+      ".rm-extras .js-cart-quantity-btn{visibility:hidden}.rm-extras .js-cart-quantity-input{pointer-events:none;width:5ch}",
       ".rm-done{position:fixed;inset:0;z-index:2147483000;background:rgba(20,18,15,.55);display:flex;align-items:flex-end;justify-content:center;padding:0}",
       "@media (min-width:640px){.rm-done{align-items:center;padding:24px}}",
       ".rm-card{background:#fff;color:#1f1d1a;width:100%;max-width:520px;max-height:92vh;overflow:auto;border-radius:20px 20px 0 0;padding:22px 20px 18px;box-shadow:0 30px 80px -20px rgba(0,0,0,.5);font-size:14px;line-height:1.5}",
@@ -97,7 +98,9 @@
       box.className = "rm-cfg";
       box.setAttribute("data-rm-config", line.id);
       if (line.role === "extras") {
-        box.innerHTML = "Adicionales de la configuración <b class='rm-id'>" + esc(line.id) + "</b>. Se compran junto con el placard.";
+        box.innerHTML = "Adicionales de la configuración <b class='rm-id'>" + esc(line.id) + "</b>: completan el precio del placard configurado. La cantidad la calcula el servidor, no se edita.";
+        // la cantidad es parte del precio validado: no se toca desde el carrito
+        el.classList.add("rm-extras");
       } else {
         box.innerHTML =
           (line.snapshotUrl ? "<img alt='' loading='lazy' src='" + esc(line.snapshotUrl) + "'>" : "") +
