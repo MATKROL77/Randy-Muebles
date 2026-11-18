@@ -1,0 +1,527 @@
+/**
+ * Materiales compartidos y texturas dibujadas en canvas.
+ *
+ * Las maderas de verdad (nogal, roble), los pisos y las telas usan fotos de
+ * public/tex (ver photo.ts). Lo que no tiene foto (las melaminas lisas, los
+ * degradés de luz) se genera al vuelo. Los materiales se comparten entre piezas para que la
+ * placa no compile un shader por pieza y los cambios de color sean un solo
+ * ajuste por cuadro.
+ */
+
+import * as THREE from "three";
+
+import { materialById } from "@/lib/catalog";
+
+import { dressWith, photoColor, type PhotoId } from "./photo";
+
+/**
+ * Con suavizado de bordes (MSAA), un triángulo más fino que un píxel se sombrea
+ * en el centro del píxel aunque caiga afuera: la normal sale extrapolada y un
+ * canto redondeado brilla a puntitos. Interpolada en el centroide (la parte
+ * del píxel que el triángulo sí cubre), la normal queda siempre adentro y el
+ * brillo del canto es una línea pareja, como en una foto.
+ */
+for (const key of ["normal_pars_fragment", "normal_pars_vertex"] as const) {
+  const chunk = THREE.ShaderChunk[key];
+  if (!chunk.includes("centroid")) THREE.ShaderChunk[key] = chunk.replace("varying vec3 vNormal;", "centroid varying vec3 vNormal;");
+}
+
+/** qué terminaciones del catálogo tienen foto de verdad */
+const VENEERS: Record<string, PhotoId> = { nogal: "nogal", roble: "roble" };
+const WHITE = new THREE.Color("#ffffff");
+/**
+ * El acabado de una chapa: laca satinada. `roughness` multiplica el mapa de la
+ * foto (que promedia 0,58): queda en ~0,5, un brillo abierto que no espeja.
+ * Encima, una capa fina de laca que da el reflejo largo de un mueble
+ * terminado. `relief`: cuánto se hunde el poro; se nota con la luz de costado.
+ */
+const VENEER_FINISH = { roughness: 0.86, clearcoat: 0.22, clearcoatRoughness: 0.42, relief: 0.9 };
+/**
+ * La trama de las telas es una foto en gris con promedio 205 (ver
+ * scripts/textures.mjs): multiplica el color y lo oscurece. Esta ganancia lo
+ * compensa para que el tapizado quede del color de su muestra.
+ */
+const DETAIL_GAIN = 1 / Math.pow(205 / 255, 2.2);
+/**
+ * Cuánto relieve y cuánto brillo rasante tiene cada tela. El brillo rasante
+ * (sheen) es el pelo de la fibra que aclara los bordes y las curvas: poco en
+ * un lino, que es seco; mucho en la pana, que es puro pelo.
+ */
+const WEAVE_LOOK: Record<string, { normal: number; sheen: number; sheenRoughness: number; lift: number }> = {
+  lino: { normal: 1.1, sheen: 0.28, sheenRoughness: 0.6, lift: 0.15 },
+  pana: { normal: 0.8, sheen: 0.9, sheenRoughness: 0.34, lift: 0.35 },
+  boucle: { normal: 1.6, sheen: 0.4, sheenRoughness: 0.75, lift: 0.2 },
+};
+/** la trama de cada tipo de tela */
+const WEAVES: Record<string, PhotoId> = { lino: "tela-lino", pana: "tela-pana", boucle: "tela-boucle", cuero: "tela-cuero" };
+
+/** pseudoaleatorio con semilla: la misma veta en cada carga */
+function rng(seed: number) {
+  let s = seed;
+  return () => (s = (s * 16807) % 2147483647) / 2147483647;
+}
+
+function canvas(size: number) {
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  return [c, c.getContext("2d")!] as const;
+}
+
+function toTexture(c: HTMLCanvasElement, srgb = true) {
+  const t = new THREE.CanvasTexture(c);
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
+
+const cache = new Map<string, THREE.Texture>();
+function cached(key: string, make: () => THREE.Texture) {
+  let t = cache.get(key);
+  if (!t) cache.set(key, (t = make()));
+  return t;
+}
+
+/** veta de madera; "v" corre a lo largo de la V de la cara, "u" de la U */
+export function woodTexture(color: string, along: "u" | "v"): THREE.Texture {
+  return cached(`wood-${color}-${along}`, () => {
+    const size = 1024;
+    const [c, ctx] = canvas(size);
+    ctx.fillStyle = color;
+    ctx.fillRect(0, 0, size, size);
+    const rand = rng(11);
+    const base = new THREE.Color(color);
+    // manchas grandes: la madera nunca es pareja
+    for (let i = 0; i < 9; i++) {
+      const p = rand() * size;
+      const g = along === "v" ? ctx.createLinearGradient(p - 120, 0, p + 120, 0) : ctx.createLinearGradient(0, p - 120, 0, p + 120);
+      const tone = base.clone().offsetHSL(0, 0, (rand() - 0.5) * 0.06);
+      g.addColorStop(0, "transparent");
+      g.addColorStop(0.5, `#${tone.getHexString()}`);
+      g.addColorStop(1, "transparent");
+      ctx.globalAlpha = 0.5;
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, size, size);
+    }
+    ctx.globalAlpha = 1;
+    // vetas finas
+    for (let i = 0; i < 260; i++) {
+      const offset = rand() * size;
+      const wobble = 1.5 + rand() * 7;
+      const freq = 0.002 + rand() * 0.008;
+      const dark = rand() > 0.35;
+      ctx.strokeStyle = dark ? `rgba(40,22,8,${0.04 + rand() * 0.07})` : `rgba(255,240,220,${0.03 + rand() * 0.05})`;
+      ctx.lineWidth = 0.5 + rand() * 2.2;
+      ctx.beginPath();
+      for (let s = 0; s <= size; s += 6) {
+        const d = offset + Math.sin(s * freq + i * 1.7) * wobble + Math.sin(s * freq * 3.1) * wobble * 0.3;
+        const [x, y] = along === "v" ? [d, s] : [s, d];
+        if (s === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+    return toTexture(c);
+  });
+}
+
+/** parquet de tablas largas para el piso de la habitación */
+export function parquetTexture(): THREE.Texture {
+  return cached("parquet", () => {
+    const size = 1024;
+    const [c, ctx] = canvas(size);
+    const rand = rng(29);
+    const plankW = size / 6;
+    for (let col = 0; col < 6; col++) {
+      let y = -rand() * size;
+      while (y < size) {
+        const len = size * (0.45 + rand() * 0.5);
+        const tone = new THREE.Color("#b88a5e").offsetHSL((rand() - 0.5) * 0.02, (rand() - 0.5) * 0.08, (rand() - 0.5) * 0.08);
+        ctx.fillStyle = `#${tone.getHexString()}`;
+        ctx.fillRect(col * plankW, y, plankW, len);
+        for (let k = 0; k < 14; k++) {
+          ctx.strokeStyle = `rgba(60,35,15,${0.04 + rand() * 0.06})`;
+          ctx.lineWidth = 0.6 + rand() * 1.4;
+          const x = col * plankW + rand() * plankW;
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.bezierCurveTo(x + (rand() - 0.5) * 8, y + len / 3, x + (rand() - 0.5) * 8, y + (2 * len) / 3, x + (rand() - 0.5) * 6, y + len);
+          ctx.stroke();
+        }
+        ctx.fillStyle = "rgba(40,24,10,0.35)";
+        ctx.fillRect(col * plankW, y, plankW, 2);
+        y += len;
+      }
+      ctx.fillStyle = "rgba(40,24,10,0.3)";
+      ctx.fillRect(col * plankW, 0, 2, size);
+    }
+    const t = toTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    return t;
+  });
+}
+
+/** pinotea: tablas largas y angostas, tono ámbar */
+export function pinoteaTexture(): THREE.Texture {
+  return cached("pinotea", () => {
+    const size = 1024;
+    const [c, ctx] = canvas(size);
+    const rand = rng(41);
+    const cols = 10;
+    const plankW = size / cols;
+    for (let col = 0; col < cols; col++) {
+      let y = -rand() * size;
+      while (y < size) {
+        const len = size * (0.6 + rand() * 0.7);
+        const tone = new THREE.Color("#a8693a").offsetHSL((rand() - 0.5) * 0.015, (rand() - 0.5) * 0.06, (rand() - 0.5) * 0.06);
+        ctx.fillStyle = `#${tone.getHexString()}`;
+        ctx.fillRect(col * plankW, y, plankW, len);
+        for (let k = 0; k < 9; k++) {
+          ctx.strokeStyle = `rgba(70,30,10,${0.05 + rand() * 0.07})`;
+          ctx.lineWidth = 0.6 + rand() * 1.2;
+          const x = col * plankW + rand() * plankW;
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.lineTo(x + (rand() - 0.5) * 4, y + len);
+          ctx.stroke();
+        }
+        ctx.fillStyle = "rgba(40,18,6,0.35)";
+        ctx.fillRect(col * plankW, y, plankW, 2);
+        y += len;
+      }
+      ctx.fillStyle = "rgba(40,18,6,0.3)";
+      ctx.fillRect(col * plankW, 0, 1.5, size);
+    }
+    const t = toTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    return t;
+  });
+}
+
+/** cemento alisado: gris con manchas suaves de llana */
+export function concreteTexture(): THREE.Texture {
+  return cached("cemento", () => {
+    const size = 1024;
+    const [c, ctx] = canvas(size);
+    const rand = rng(53);
+    ctx.fillStyle = "#adaca8";
+    ctx.fillRect(0, 0, size, size);
+    for (let i = 0; i < 70; i++) {
+      const x = rand() * size;
+      const y = rand() * size;
+      const r = 60 + rand() * 220;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      const light = rand() > 0.5;
+      g.addColorStop(0, light ? "rgba(255,255,255,0.07)" : "rgba(60,58,54,0.07)");
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(x - r, y - r, 2 * r, 2 * r);
+    }
+    const t = toTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    return t;
+  });
+}
+
+/** baldosa beige de 60 × 60 con su junta */
+export function tileTexture(): THREE.Texture {
+  return cached("baldosa", () => {
+    const size = 1024;
+    const [c, ctx] = canvas(size);
+    const rand = rng(67);
+    const n = 2;
+    const tile = size / n;
+    for (let i = 0; i < n; i++)
+      for (let j = 0; j < n; j++) {
+        const tone = new THREE.Color("#e2d6c2").offsetHSL(0, 0, (rand() - 0.5) * 0.03);
+        ctx.fillStyle = `#${tone.getHexString()}`;
+        ctx.fillRect(i * tile, j * tile, tile, tile);
+      }
+    ctx.fillStyle = "#c9bba3";
+    for (let k = 0; k <= n; k++) {
+      ctx.fillRect(k * tile - 3, 0, 6, size);
+      ctx.fillRect(0, k * tile - 3, size, 6);
+    }
+    const t = toTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    return t;
+  });
+}
+
+let room: THREE.Texture | null = null;
+/**
+ * Lo que refleja un espejo en el 3D rápido. Los reflejos salen de la foto de
+ * un estudio fotográfico, que es oscuro fuera de sus paneles de luz: le queda
+ * bien a un metal, pero un espejo de placard se veía como una placa negra. Un
+ * espejo de verdad devuelve la habitación que tiene enfrente: acá se pinta
+ * una, fuera de foco (cielorraso claro, pared, una ventana, un mueble, el piso
+ * de madera), en una imagen chica que se arma una sola vez. El trazado de
+ * rayos no la usa: ahí el espejo refleja la escena de verdad.
+ */
+export function roomReflection(): THREE.Texture {
+  if (room) return room;
+  const w = 512;
+  const h = 256;
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext("2d")!;
+  // de arriba (el cenit) hacia abajo (el piso bajo los pies); el horizonte queda a media altura
+  const sky = ctx.createLinearGradient(0, 0, 0, h);
+  sky.addColorStop(0, "#f7f4ee");
+  sky.addColorStop(0.36, "#f1ede6");
+  sky.addColorStop(0.4, "#e7e1d8");
+  sky.addColorStop(0.5, "#e2dbd0");
+  sky.addColorStop(0.505, "#cdb99b");
+  sky.addColorStop(0.62, "#c3ad8d");
+  sky.addColorStop(1, "#a8926f");
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, w, h);
+  // las tablas del piso, que se abren desde abajo de quien mira: en el espejo son las
+  // líneas en fuga de un piso de madera
+  for (let i = 0; i < 96; i++) {
+    const tone = ((i * 7919) % 13) / 13 - 0.5;
+    ctx.fillStyle = tone > 0 ? `rgba(255,244,224,${(tone * 0.22).toFixed(3)})` : `rgba(70,48,24,${(-tone * 0.2).toFixed(3)})`;
+    ctx.fillRect((i / 96) * w, 0.505 * h, w / 96 + 0.5, 0.495 * h);
+  }
+  // lo que hay en la habitación, apenas fuera de foco: ventanas claras y su luz en el piso,
+  // muebles más oscuros contra la pared, una alfombra. Un espejo se reconoce porque devuelve
+  // formas; devolviendo un color parejo parece una placa pintada
+  ctx.filter = "blur(2.5px)";
+  const patch = (x: number, y: number, pw: number, ph: number, color: string) => {
+    ctx.fillStyle = color;
+    // también corrido una vuelta entera: la imagen empalma de punta a punta
+    for (const dx of [-w, 0, w]) ctx.fillRect(x * w + dx, y * h, pw * w, ph * h);
+  };
+  const oval = (x: number, y: number, rx: number, ry: number, color: string) => {
+    ctx.fillStyle = color;
+    for (const dx of [-w, 0, w]) {
+      ctx.beginPath();
+      ctx.ellipse(x * w + dx, y * h, rx * w, ry * h, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  };
+  for (const [x, wide] of [
+    [0.04, 0.07],
+    [0.3, 0.05],
+    [0.56, 0.09],
+    [0.86, 0.06],
+  ]) {
+    patch(x, 0.32, wide, 0.16, "#ffffff");
+    // la luz que entra por la ventana, tirada en el piso
+    patch(x - 0.01, 0.56, wide + 0.02, 0.07, "rgba(255,246,226,0.55)");
+  }
+  patch(0.15, 0.41, 0.1, 0.15, "#a8957b");
+  patch(0.42, 0.39, 0.07, 0.19, "#857869");
+  patch(0.68, 0.44, 0.13, 0.11, "#96866f");
+  patch(0.93, 0.4, 0.05, 0.16, "#b5a690");
+  oval(0.22, 0.68, 0.09, 0.05, "#8f9796");
+  oval(0.5, 0.7, 0.07, 0.06, "#a58a72");
+  oval(0.78, 0.67, 0.1, 0.05, "#8b9193");
+  ctx.filter = "none";
+  room = new THREE.CanvasTexture(c);
+  room.mapping = THREE.EquirectangularReflectionMapping;
+  room.colorSpace = THREE.SRGBColorSpace;
+  return room;
+}
+
+/**
+ * El difusor de una tira LED. Visto de lejos o de canto mide menos de un píxel,
+ * y algo tan brillante y tan fino se dibuja como una fila de puntos. El brillo
+ * se apaga cuando la cara ocupa menos de un par de píxeles: de cerca brilla, de
+ * lejos queda la luz que tira y no los puntitos.
+ */
+function ledLens() {
+  const m = new THREE.MeshStandardMaterial({ color: "#e6e6e6", roughness: 0.4, emissive: "#000000", emissiveIntensity: 0 });
+  m.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader.replace("#include <common>", "#include <common>\nvarying vec2 vLensUv;").replace("#include <begin_vertex>", "#include <begin_vertex>\nvLensUv = uv;");
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", "#include <common>\nvarying vec2 vLensUv;")
+      .replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n{ vec2 fw = fwidth(vLensUv); totalEmissiveRadiance *= smoothstep(0.7, 2.4, 1.0 / max(max(fw.x, fw.y), 1e-5)); }");
+  };
+  return m;
+}
+
+/** vidrio fumé: deja ver el interior y las luces, pero se nota que hay vidrio */
+export const GLASS_OPACITY = 0.42;
+
+export type MaterialKit = ReturnType<typeof createKit>;
+
+/**
+ * Un juego de materiales por combinación de terminaciones. Los frentes tienen
+ * su propia copia transparente para la vista de rayos X.
+ */
+export function createKit(bodyId: string, doorId: string, fabric = "#cdbfa9", weave = "lino") {
+  const surface = (id: string, along: "u" | "v", transparent = false) => {
+    const m = materialById(id);
+    const photo = VENEERS[id];
+    const material = new THREE.MeshPhysicalMaterial({
+      // mientras baja la foto se ve su color promedio, nunca negro
+      color: photo ? photoColor(photo, m.color) : m.grain ? "#ffffff" : m.color,
+      map: !photo && m.grain ? woodTexture(m.color, along) : null,
+      // la melamina lisa es apenas texturada: devuelve la luz abierta, sin espejar la sala
+      roughness: m.grain ? 0.58 : 0.56,
+      metalness: 0,
+      transparent,
+      envMapIntensity: 0.9,
+      // una capa de barniz satinado: el reflejo largo y suave de un mueble terminado
+      clearcoat: photo ? VENEER_FINISH.clearcoat : 0.12,
+      clearcoatRoughness: photo ? VENEER_FINISH.clearcoatRoughness : 0.55,
+    });
+    // chapa de verdad, proyectada según la medida de cada pieza. La foto ya viene en su tono
+    // (scripts/textures.mjs): no se tiñe, que es lo que la dejaba anaranjada
+    return photo ? dressWith(material, photo, { tint: WHITE, roughness: VENEER_FINISH.roughness, normalScale: VENEER_FINISH.relief }) : material;
+  };
+  const kit = {
+    /** qué terminación va en los frentes: las piezas que la nombran la usan aunque no sean un frente */
+    doorId,
+    /** tapizado: mate, sin brillo, con un tejido apenas marcado; el cuero, semimate con su graneado */
+    fabric: weave === "cuero" ? leather(fabric) : upholstery(fabric, weave),
+    /** hierro pintado de negro: marcos y patas */
+    iron: new THREE.MeshStandardMaterial({ color: "#1d1c1b", metalness: 0.55, roughness: 0.48, envMapIntensity: 0.8 }),
+    body: { v: surface(bodyId, "v"), u: surface(bodyId, "u") },
+    door: { v: surface(doorId, "v", true), u: surface(doorId, "u", true) },
+    /** frentes de cajón con el color del cuerpo (van detrás de las puertas) */
+    bodyFront: { v: surface(bodyId, "v", true), u: surface(bodyId, "u", true) },
+    back: backing(bodyId),
+    metal: new THREE.MeshStandardMaterial({ color: "#c9ccd0", metalness: 1, roughness: 0.32 }),
+    handle: new THREE.MeshStandardMaterial({ color: "#2a2a2a", metalness: 0.75, roughness: 0.28, transparent: true }),
+    groove: new THREE.MeshStandardMaterial({ color: "#191714", roughness: 0.9, transparent: true }),
+    // el espejo devuelve una habitación clara (ver roomReflection), apenas azulado como el vidrio plateado
+    mirror: new THREE.MeshStandardMaterial({ color: "#eef2f3", metalness: 1, roughness: 0.03, envMap: roomReflection(), envMapIntensity: 0.95, transparent: true }),
+    // el vidrio no escribe profundidad: si no, según desde dónde se mire tapa lo que está
+    // detrás y es transparente (las patas de una mesa, que toman el material de los frentes)
+    glass: Object.assign(new THREE.MeshStandardMaterial({ color: "#3a4246", metalness: 0.2, roughness: 0.05, transparent: true, opacity: GLASS_OPACITY, envMapIntensity: 1.2, depthWrite: false }), {
+      // el vidrio no oscurece el piso que tiene debajo
+      userData: { noContact: true },
+    }),
+    frame: new THREE.MeshStandardMaterial({ color: "#b8bcc1", metalness: 1, roughness: 0.3, transparent: true }),
+    led: ledLens(),
+  };
+  return kit;
+}
+
+/**
+ * El fondo del mueble: la misma terminación del cuerpo, apenas más apagada
+ * (es una placa fina, sin laqueado). Con chapa lleva su foto; el color no se
+ * multiplica dos veces, que es lo que dejaba los nichos de nogal en negro.
+ */
+function backing(bodyId: string) {
+  const body = materialById(bodyId);
+  const photo = VENEERS[bodyId];
+  const shade = body.grain ? 0.94 : 0.97;
+  const drawn = !photo && body.grain;
+  const material = new THREE.MeshStandardMaterial({
+    color: drawn ? new THREE.Color(shade, shade, shade) : (photo ? photoColor(photo, body.color) : new THREE.Color(body.color)).multiplyScalar(shade),
+    map: drawn ? woodTexture(body.color, "v") : null,
+    roughness: 0.78,
+    envMapIntensity: 0.7,
+  });
+  return photo ? dressWith(material, photo, { tint: new THREE.Color(shade, shade, shade), roughness: 1.3, normalScale: 0.5 }) : material;
+}
+
+/**
+ * Tela de tapizado: la trama fotografiada (en gris, sobre el color elegido), su
+ * relieve y el brillo rasante de la fibra, que aclara los bordes y las curvas
+ * como en una foto de un sillón de verdad.
+ */
+function upholstery(color: string, weave: string) {
+  const look = WEAVE_LOOK[weave] ?? WEAVE_LOOK.lino;
+  return dressWith(
+    new THREE.MeshPhysicalMaterial({
+      color,
+      roughness: 0.95,
+      metalness: 0,
+      envMapIntensity: 0.35,
+      sheen: look.sheen,
+      sheenRoughness: look.sheenRoughness,
+      sheenColor: new THREE.Color(color).lerp(new THREE.Color("#ffffff"), look.lift),
+    }),
+    WEAVES[weave] ?? "tela-lino",
+    { normalScale: look.normal, roughness: 1, tint: new THREE.Color(color).multiplyScalar(DETAIL_GAIN) },
+  );
+}
+
+/** cuero de tapicería: poro, pliegues y un brillo apagado que se abre en las curvas */
+function leather(color: string) {
+  return dressWith(
+    new THREE.MeshPhysicalMaterial({
+      color,
+      roughness: 0.55,
+      metalness: 0,
+      envMapIntensity: 0.75,
+      clearcoat: 0.25,
+      clearcoatRoughness: 0.4,
+    }),
+    "tela-cuero",
+    { normalScale: 1.25, roughness: 0.6, tint: new THREE.Color(color).multiplyScalar(DETAIL_GAIN) },
+  );
+}
+
+/** materiales de frente: los que se vuelven translúcidos con rayos X */
+export function frontMaterials(kit: MaterialKit): THREE.Material[] {
+  return [kit.door.u, kit.door.v, kit.bodyFront.u, kit.bodyFront.v, kit.handle, kit.groove, kit.mirror, kit.frame];
+}
+
+export function disposeKit(kit: MaterialKit) {
+  const all = [kit.body.u, kit.body.v, kit.door.u, kit.door.v, kit.bodyFront.u, kit.bodyFront.v, kit.back, kit.metal, kit.handle, kit.groove, kit.mirror, kit.glass, kit.frame, kit.led, kit.fabric, kit.iron];
+  all.forEach((m) => m.dispose());
+}
+
+let weave: THREE.CanvasTexture | null = null;
+/** trama de tela: un relieve fino que se repite, para que el tapizado no parezca plástico */
+export function weaveTexture(): THREE.CanvasTexture {
+  if (weave) return weave;
+  const size = 64;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const v = 120 + ((x % 4 < 2) !== (y % 4 < 2) ? 46 : 0) + Math.random() * 40;
+      ctx.fillStyle = `rgb(${v},${v},${v})`;
+      ctx.fillRect(x, y, 1, 1);
+    }
+  }
+  weave = new THREE.CanvasTexture(canvas);
+  weave.wrapS = weave.wrapT = THREE.RepeatWrapping;
+  weave.repeat.set(26, 26);
+  weave.anisotropy = 4;
+  return weave;
+}
+
+let mottle: THREE.CanvasTexture | null = null;
+/** variación de tono de una tela: manchas grandes y suaves más un grano fino, casi blanco para multiplicar el color */
+export function mottleTexture(): THREE.CanvasTexture {
+  if (mottle) return mottle;
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "#e9e9e9";
+  ctx.fillRect(0, 0, size, size);
+  for (let i = 0; i < 90; i++) {
+    const x = Math.random() * size;
+    const y = Math.random() * size;
+    const r = 18 + Math.random() * 46;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    const dark = Math.random() < 0.5;
+    g.addColorStop(0, dark ? "rgba(150,150,150,0.11)" : "rgba(255,255,255,0.14)");
+    g.addColorStop(1, "rgba(200,200,200,0)");
+    ctx.fillStyle = g;
+    // se repite en los cuatro bordes para que la textura empalme sin costura
+    for (const dx of [-size, 0, size]) for (const dy of [-size, 0, size]) ctx.fillRect(x + dx - r, y + dy - r, 2 * r, 2 * r);
+  }
+  const img = ctx.getImageData(0, 0, size, size);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const n = (Math.random() - 0.5) * 26;
+    img.data[i] += n;
+    img.data[i + 1] += n;
+    img.data[i + 2] += n;
+  }
+  ctx.putImageData(img, 0, 0);
+  mottle = new THREE.CanvasTexture(canvas);
+  mottle.wrapS = mottle.wrapT = THREE.RepeatWrapping;
+  mottle.repeat.set(1.5, 1.5);
+  mottle.colorSpace = THREE.SRGBColorSpace;
+  return mottle;
+}

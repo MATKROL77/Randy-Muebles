@@ -1,0 +1,855 @@
+@import "tailwindcss";
+
+/*
+ * MEDIDA: beige liso y azul marino liso.
+ *
+ * El fondo es un beige cálido, parejo. El texto, los botones y lo elegido son
+ * azul marino. Las superficies son blancas translúcidas: dejan ver el beige.
+ * Sin texturas ni degradés en la página: la textura la ponen los muebles.
+ *
+ * Los nombres dicen qué son, no qué color tienen, para poder cambiar la marca
+ * sin tocar componentes. Contraste sobre el beige (#ece5d8): ink 13:1, ink-2
+ * 6,7:1; texto claro sobre el azul 14:1.
+ */
+@theme {
+  --color-beige: #ece5d8;
+  --color-paper: rgb(255 255 255 / 0.34);
+  --color-surface: rgb(255 255 255 / 0.55);
+  /* para lo que no puede ser transparente: el texto de un campo, una perilla */
+  --color-solid: #f8f5ef;
+  /* texto sobre azul */
+  --color-on-dark: #f6f1e8;
+  --color-ink: #14213d;
+  --color-ink-2: #4a5369;
+  --color-ink-3: #7c8191;
+  --color-line: rgb(20 33 61 / 0.13);
+  --color-accent: #14213d;
+  --color-accent-strong: #0d1730;
+  --color-accent-soft: rgb(20 33 61 / 0.08);
+  --color-navy: #14213d;
+  --color-navy-hover: #22335a;
+  --color-ok: #2f6b4f;
+  --color-whatsapp: #14213d;
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  /* títulos con serif de imprenta: la del sistema, sin bajar ninguna fuente */
+  --font-display: "Times New Roman", Times, "Liberation Serif", "Noto Serif", Georgia, serif;
+
+  --radius-card: 1.1rem;
+  --radius-tile: 1.5rem;
+  /* curva con un rebote chiquito: la misma sensación elástica que el 3D */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* sale rápido y frena largo: entradas de secciones y hojas */
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+html {
+  background: var(--color-beige);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  scroll-padding-top: 5rem;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-feature-settings: "cv11", "ss01";
+}
+
+::selection {
+  background: rgb(20 33 61 / 0.16);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+  border-radius: 0.35rem;
+}
+
+@layer components {
+  /* ancho de lectura del sitio */
+  .wrap {
+    width: 100%;
+    max-width: 75rem;
+    margin-inline: auto;
+    padding-inline: 1.25rem;
+  }
+  @media (min-width: 640px) {
+    .wrap {
+      padding-inline: 2rem;
+    }
+  }
+
+  /* títulos: apretados y grandes, como una pieza gráfica */
+  .display-xl {
+    font-family: var(--font-display);
+    font-weight: 400;
+    font-size: clamp(1.8rem, 7.4vw, 5.4rem);
+    line-height: 0.98;
+    letter-spacing: 0.01em;
+    text-transform: uppercase;
+  }
+  .display-lg {
+    font-family: var(--font-display);
+    font-weight: 400;
+    font-size: clamp(2.15rem, 5vw, 3.8rem);
+    line-height: 1.04;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+  }
+  .display-md {
+    font-family: var(--font-display);
+    font-weight: 400;
+    font-size: clamp(1.6rem, 2.7vw, 2.1rem);
+    line-height: 1.12;
+    letter-spacing: -0.012em;
+    text-wrap: balance;
+  }
+  .lead {
+    font-size: clamp(1.08rem, 1.55vw, 1.32rem);
+    line-height: 1.5;
+    color: var(--color-ink-2);
+    text-wrap: pretty;
+  }
+
+  .card {
+    background: var(--color-surface);
+    border: 1px solid rgb(255 255 255 / 0.6);
+    border-radius: var(--radius-card);
+  }
+  /*
+   * Vidrio: deja ver lo de atrás desenfocado. Se usa en lo que flota sobre la
+   * página (encabezado, barras, ventanas), con un borde claro para que se
+   * despegue del fondo.
+   */
+  .glass {
+    background: rgb(255 255 255 / 0.4);
+    -webkit-backdrop-filter: blur(14px) saturate(1.2);
+    backdrop-filter: blur(14px) saturate(1.2);
+    border: 1px solid rgb(255 255 255 / 0.55);
+    box-shadow: 0 10px 30px rgb(20 33 61 / 0.08);
+  }
+  .glass-strong {
+    background: rgb(248 245 239 / 0.82);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4);
+    backdrop-filter: blur(20px) saturate(1.4);
+    border: 1px solid rgb(255 255 255 / 0.45);
+  }
+  /* el fondo de una ventana: la página sigue ahí, apenas fuera de foco */
+  .veil {
+    background: rgb(20 33 61 / 0.24);
+    -webkit-backdrop-filter: blur(5px) saturate(1.1);
+    backdrop-filter: blur(5px) saturate(1.1);
+  }
+
+  /* bloque gris sin borde: el contenedor de una imagen o de una idea */
+  .tile {
+    background: var(--color-paper);
+    border: 1px solid rgb(255 255 255 / 0.5);
+    border-radius: var(--radius-tile);
+  }
+
+  .eyebrow {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--color-accent);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 999px;
+    padding: 0.8rem 1.4rem;
+    font-weight: 600;
+    line-height: 1.2;
+    transition:
+      transform 160ms var(--ease-out),
+      background-color 200ms ease,
+      border-color 200ms ease,
+      color 200ms ease;
+  }
+  .btn:active {
+    transform: scale(0.97);
+  }
+  .btn-sm {
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+  }
+  /* azul marino liso: lo que se toca */
+  .btn-primary,
+  .btn-whatsapp {
+    color: var(--color-on-dark);
+    background: var(--color-navy);
+  }
+  .btn-primary:hover,
+  .btn-whatsapp:hover {
+    background: var(--color-navy-hover);
+  }
+  .btn-secondary {
+    background: rgb(255 255 255 / 0.5);
+    color: var(--color-ink);
+    border: 1px solid rgb(20 33 61 / 0.1);
+  }
+  .btn-secondary:hover {
+    background: rgb(255 255 255 / 0.75);
+  }
+  .btn-ghost {
+    border: 1px solid rgb(20 33 61 / 0.22);
+    background: transparent;
+  }
+  .btn-ghost:hover {
+    border-color: var(--color-navy);
+  }
+  .btn-light {
+    background: var(--color-solid);
+    color: var(--color-ink);
+  }
+  .btn-light:hover {
+    background: #fff;
+  }
+  .btn-outline-light {
+    border: 1px solid rgb(255 255 255 / 0.28);
+    color: #fff;
+  }
+  .btn-outline-light:hover {
+    border-color: rgb(255 255 255 / 0.6);
+  }
+
+  /* enlace de texto con flecha: la flecha se adelanta al pasar por encima */
+  .link-arrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-weight: 500;
+    color: var(--color-accent);
+  }
+  .link-arrow::after {
+    content: "›";
+    font-size: 1.15em;
+    line-height: 1;
+    transform: translateY(-0.04em);
+    transition: transform 240ms var(--ease-out);
+  }
+  .link-arrow:hover::after {
+    transform: translate(0.22em, -0.04em);
+  }
+  .link-arrow:hover {
+    color: var(--color-accent-strong);
+  }
+
+  /* estado de una familia de producto */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    border-radius: 999px;
+    padding: 0.28rem 0.7rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+  .badge-live {
+    background: rgb(31 52 102 / 0.1);
+    color: var(--color-accent-strong);
+    border: 1px solid rgb(31 52 102 / 0.14);
+  }
+  .badge-live::before {
+    content: "";
+    width: 0.4rem;
+    height: 0.4rem;
+    border-radius: 999px;
+    background: var(--color-navy);
+    box-shadow: 0 0 0 3px rgb(20 33 61 / 0.14);
+  }
+  .badge-dev {
+    background: rgb(255 252 247 / 0.4);
+    color: var(--color-ink-2);
+  }
+
+  /* botones de opción: un grupo donde se elige una sola cosa */
+  .segment {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    gap: 0.25rem;
+    padding: 0.25rem;
+    border-radius: 0.9rem;
+    background: var(--color-paper);
+    border: 1px solid var(--color-line);
+  }
+  .segment > button {
+    border-radius: 0.65rem;
+    padding: 0.55rem 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--color-ink-2);
+  }
+  .segment > button[aria-pressed="true"] {
+    background: rgb(255 252 247 / 0.85);
+    color: var(--color-navy);
+    box-shadow:
+      0 1px 2px rgb(0 0 0 / 0.06),
+      0 0 0 1px rgb(20 33 61 / 0.22);
+  }
+  .segment > button:disabled {
+    opacity: 0.35;
+  }
+
+  /* con muchas opciones, en filas: en una sola no entran en un teléfono */
+  .segment-sm {
+    grid-auto-flow: row;
+    grid-template-columns: repeat(auto-fit, minmax(6.25rem, 1fr));
+  }
+  .segment-sm > button {
+    padding: 0.4rem 0.4rem;
+    font-size: 0.8rem;
+  }
+  .segment > button {
+    transition:
+      background-color 220ms var(--ease-spring),
+      color 200ms ease,
+      box-shadow 220ms ease;
+  }
+
+  /* barra de medida: el tramo recorrido se pinta con el acento */
+  .range {
+    appearance: none;
+    width: 100%;
+    height: 1.5rem;
+    background: transparent;
+    cursor: pointer;
+  }
+  .range::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 999px;
+    background: linear-gradient(to right, var(--color-navy) var(--pct, 50%), var(--color-line) var(--pct, 50%));
+  }
+  .range::-moz-range-track {
+    height: 4px;
+    border-radius: 999px;
+    background: linear-gradient(to right, var(--color-navy) var(--pct, 50%), var(--color-line) var(--pct, 50%));
+  }
+  .range::-webkit-slider-thumb {
+    appearance: none;
+    margin-top: -8px;
+    width: 20px;
+    height: 20px;
+    border-radius: 999px;
+    background: var(--color-solid);
+    border: 2px solid var(--color-navy);
+    box-shadow: 0 1px 4px rgb(0 0 0 / 0.18);
+    transition: transform 220ms var(--ease-spring);
+  }
+  .range::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    background: var(--color-solid);
+    border: 2px solid var(--color-navy);
+    box-shadow: 0 1px 4px rgb(0 0 0 / 0.18);
+  }
+  .range:active::-webkit-slider-thumb {
+    transform: scale(1.25);
+  }
+
+  .toggle-knob {
+    transition: transform 360ms var(--ease-spring);
+  }
+  .swatch,
+  .option-card {
+    transition:
+      transform 320ms var(--ease-spring),
+      border-color 200ms ease,
+      background-color 200ms ease,
+      color 200ms ease;
+  }
+  .swatch:hover,
+  .option-card:not(:disabled):hover {
+    transform: translateY(-2px);
+  }
+  .swatch[aria-pressed="true"] {
+    transform: scale(1.12);
+  }
+  .option-card:not(:disabled):active,
+  .swatch:active {
+    transform: scale(0.94);
+  }
+
+  .pop {
+    animation: pop 380ms var(--ease-spring);
+  }
+  .fade-in {
+    animation: fade-in 320ms ease both;
+  }
+
+  /* barra flotante del visor */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.35rem;
+    border-radius: 999px;
+    background: rgb(255 255 255 / 0.5);
+    -webkit-backdrop-filter: blur(14px) saturate(1.2);
+    backdrop-filter: blur(14px) saturate(1.2);
+    border: 1px solid rgb(255 255 255 / 0.6);
+    box-shadow: 0 8px 24px rgb(20 33 61 / 0.1);
+  }
+  .tool {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    height: 2.4rem;
+    padding: 0 0.75rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--color-ink-2);
+    white-space: nowrap;
+    transition:
+      background-color 200ms ease,
+      color 200ms ease,
+      transform 260ms var(--ease-spring);
+  }
+  .tool:hover {
+    color: var(--color-ink);
+    background: rgb(255 255 255 / 0.6);
+  }
+  .tool:active {
+    transform: scale(0.92);
+  }
+  .tool[aria-pressed="true"] {
+    color: var(--color-on-dark);
+    background: var(--color-navy);
+  }
+  .tool:disabled {
+    opacity: 0.35;
+    pointer-events: none;
+  }
+  .tool-sep {
+    width: 1px;
+    height: 1.4rem;
+    background: var(--color-line);
+    margin: 0 0.15rem;
+  }
+
+  /* cuánto le falta a la foto realista: una píldora arriba a la derecha del visor */
+  .photo-badge {
+    position: absolute;
+    right: 0.85rem;
+    bottom: 4.6rem;
+    z-index: 10;
+    overflow: hidden;
+    border-radius: 999px;
+    padding: 0.4rem 0.85rem 0.5rem;
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    color: var(--color-ink);
+    background: color-mix(in srgb, var(--color-surface) 55%, transparent);
+    -webkit-backdrop-filter: blur(16px) saturate(1.4);
+    backdrop-filter: blur(16px) saturate(1.4);
+    border: 1px solid rgb(255 255 255 / 0.45);
+    pointer-events: none;
+    animation: fade-in 320ms ease both;
+  }
+  /* en el teléfono, la barra del visor más compacta: deja más lugar al mueble */
+  @media (max-width: 639px) {
+    .tool {
+      height: 2.15rem;
+      padding: 0 0.6rem;
+    }
+    .toolbar {
+      padding: 0.25rem;
+    }
+  }
+  /* el botón de la decoración: en el teléfono arriba a la izquierda; en la
+     computadora abajo a la izquierda, a la altura del aviso de la foto */
+  .deco-toggle {
+    position: absolute;
+    left: 0.75rem;
+    top: 0.75rem;
+    z-index: 10;
+  }
+  @media (min-width: 1024px) {
+    .deco-toggle {
+      left: 0.85rem;
+      top: auto;
+      bottom: 4.6rem;
+    }
+  }
+  /* la seña de deslizar: un puntito que sube por una guía, a la derecha del 3D */
+  .swipe-hint {
+    position: absolute;
+    right: 0.75rem;
+    bottom: 5.4rem;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.55rem 0.45rem 0.5rem;
+    border-radius: 999px;
+    transition: opacity 300ms ease;
+  }
+  .swipe-track {
+    position: relative;
+    width: 0.5rem;
+    height: 3.2rem;
+    border-radius: 999px;
+    background: rgb(20 33 61 / 0.12);
+  }
+  .swipe-dot {
+    position: absolute;
+    left: 50%;
+    bottom: 0;
+    width: 0.95rem;
+    height: 0.95rem;
+    margin-left: -0.475rem;
+    border-radius: 999px;
+    background: var(--color-navy);
+    box-shadow: 0 2px 8px rgb(20 33 61 / 0.3);
+    animation: swipe-dot 1.7s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+  }
+  .swipe-label {
+    font-size: 0.62rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--color-ink);
+  }
+  @keyframes swipe-dot {
+    0% {
+      transform: translateY(0);
+      opacity: 0;
+    }
+    15% {
+      opacity: 1;
+    }
+    70% {
+      transform: translateY(-2.25rem);
+      opacity: 1;
+    }
+    100% {
+      transform: translateY(-2.25rem);
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .swipe-dot {
+      animation: none;
+      bottom: 1.1rem;
+    }
+  }
+  /* las tarjetas de las medidas, en el teléfono: la elegida, marcada en azul */
+  .dim-card {
+    border-radius: 1rem;
+    border: 1px solid var(--color-line);
+    background: var(--color-paper);
+    padding: 0.6rem 0.5rem 0.65rem;
+    text-align: center;
+    transition:
+      border-color 180ms ease,
+      background-color 180ms ease,
+      box-shadow 180ms ease;
+  }
+  .dim-card[aria-pressed="true"] {
+    border-color: var(--color-navy);
+    background: rgb(20 33 61 / 0.07);
+    box-shadow: 0 0 0 1px var(--color-navy);
+  }
+  .photo-badge-bar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 2px;
+    background: var(--color-navy);
+    transform-origin: left;
+    transition: transform 400ms ease;
+  }
+
+  /* solapas del panel */
+  .tab {
+    position: relative;
+    padding: 0.85rem 0.2rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--color-ink-2);
+    transition: color 200ms ease;
+  }
+  .tab[aria-selected="true"] {
+    color: var(--color-ink);
+  }
+  .tab::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 2px;
+    border-radius: 2px;
+    background: var(--color-navy);
+    transform: scaleX(0);
+    transition: transform 380ms var(--ease-spring);
+  }
+  .tab[aria-selected="true"]::after {
+    transform: scaleX(1);
+  }
+
+  /* campo de texto del sitio */
+  .field {
+    width: 100%;
+    border-radius: 0.85rem;
+    border: 1px solid var(--color-line);
+    background: rgb(255 252 247 / 0.6);
+    padding: 0.8rem 1rem;
+    font-size: 1rem;
+    transition:
+      border-color 200ms ease,
+      box-shadow 200ms ease;
+  }
+  .field::placeholder {
+    color: var(--color-ink-3);
+  }
+  .field:focus {
+    outline: none;
+    border-color: var(--color-accent);
+    background: rgb(255 252 247 / 0.82);
+    box-shadow: 0 0 0 3px var(--color-accent-soft);
+  }
+
+  /* texto largo de las páginas legales */
+  .prose h2 {
+    margin-top: 2.5rem;
+    font-family: var(--font-display);
+    font-size: 1.35rem;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+  }
+  .prose h3 {
+    margin-top: 1.5rem;
+    font-weight: 600;
+  }
+  .prose p,
+  .prose ul,
+  .prose table {
+    margin-top: 0.85rem;
+    line-height: 1.7;
+    color: var(--color-ink-2);
+  }
+  .prose ul {
+    list-style: disc;
+    padding-left: 1.2rem;
+  }
+  .prose li + li {
+    margin-top: 0.35rem;
+  }
+  .prose a {
+    color: var(--color-accent);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .prose strong {
+    color: var(--color-ink);
+    font-weight: 600;
+  }
+  .prose table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+  .prose td,
+  .prose th {
+    overflow-wrap: anywhere;
+  }
+  /* en el teléfono una tabla de varias columnas no entra: cada fila pasa a ser un bloque */
+  @media (max-width: 639px) {
+    .prose table,
+    .prose tbody,
+    .prose tr,
+    .prose td {
+      display: block;
+    }
+    .prose thead {
+      display: none;
+    }
+    .prose tr {
+      border-bottom: 1px solid var(--color-line);
+      padding: 0.75rem 0;
+    }
+    .prose td {
+      border: 0;
+      padding: 0.15rem 0;
+    }
+    .prose td:first-child {
+      color: var(--color-ink);
+      font-weight: 600;
+    }
+  }
+  .prose th,
+  .prose td {
+    border-bottom: 1px solid var(--color-line);
+    padding: 0.6rem 0.75rem 0.6rem 0;
+    text-align: left;
+    vertical-align: top;
+  }
+  .prose th {
+    color: var(--color-ink);
+    font-weight: 600;
+  }
+}
+
+@layer components {
+  .sheet-backdrop {
+    animation: fade-in-plain 260ms ease both;
+  }
+  .sheet-panel {
+    animation: sheet-in 460ms var(--ease-out) both;
+  }
+  .window-in {
+    animation: window-in 520ms var(--ease-out) both;
+  }
+  .shimmer {
+    background: linear-gradient(100deg, rgb(255 252 247 / 0.2) 30%, rgb(255 252 247 / 0.5) 50%, rgb(255 252 247 / 0.2) 70%);
+    background-size: 220% 100%;
+    animation: shimmer 1.2s linear infinite;
+  }
+  .toast {
+    animation: toast-in 420ms var(--ease-out) both;
+  }
+}
+
+/*
+ * Entrada de las secciones al llegar con el scroll. Solo se esconde lo que
+ * después se puede mostrar: sin JavaScript (sin la clase `js`) todo se ve.
+ */
+.js [data-reveal] {
+  opacity: 0;
+  transform: translateY(20px);
+  transition:
+    opacity 800ms var(--ease-out),
+    transform 800ms var(--ease-out);
+  transition-delay: var(--reveal-delay, 0ms);
+}
+.js [data-reveal].is-in {
+  opacity: 1;
+  transform: none;
+}
+
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(32px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes window-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes fade-in-plain {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes shimmer {
+  to {
+    background-position: -120% 0;
+  }
+}
+
+@keyframes pop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.4;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+  .js [data-reveal] {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  html,
+  body {
+    background: #fff;
+  }
+  .card {
+    break-inside: avoid;
+  }
+}
+
+/* avance de las imágenes que cambian solas */
+@keyframes progress {
+  from {
+    width: 0;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+/* la barra de precio del configurador: chica, de vidrio, sin tapar el mueble */
+.price-bar {
+  background: rgb(248 245 239 / 0.82);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border-top: 1px solid var(--color-line);
+}
+@media (min-width: 1024px) {
+  .price-bar {
+    background: rgb(255 255 255 / 0.3);
+  }
+}
+

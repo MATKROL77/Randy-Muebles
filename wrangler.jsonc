@@ -1,0 +1,30 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Configurador 3D de Randy Muebles (DEMO). Tres entornos separados:
+  //   desarrollo  randy-muebles-configurador-dev      (npx wrangler deploy --env dev)
+  //   pruebas     randy-muebles-configurador-staging  (npx wrangler deploy --env staging)
+  //   producción  randy-muebles-configurador          (npx wrangler deploy --env production)
+  // Cada uno tiene su propia base (KV) y su propia tienda autorizada. El sitio
+  // estático también vive en esa base: lo sube `npm run deploy -- <entorno>`.
+  "name": "randy-muebles-configurador",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-08-03",
+  "observability": { "enabled": true },
+  "env": {
+    "dev": {
+      "name": "randy-muebles-configurador-dev",
+      "kv_namespaces": [{ "binding": "CONFIGS", "id": "db08074ad1864d77874b05c42b4fda65" }],
+      "vars": { "ENVIRONMENT": "dev", "ALLOWED_ORIGINS": "https://medida3.mitiendanube.com", "TN_EXTRAS_PRODUCT_ID": "381937118", "TN_PRODUCT_MODELS": "{\"381868671\":\"placard-2p\",\"381937130\":\"placard-3p\",\"381937136\":\"placard-espejo\"}" }
+    },
+    "staging": {
+      "name": "randy-muebles-configurador-staging",
+      "kv_namespaces": [{ "binding": "CONFIGS", "id": "5df13267d0f142a2b483da12ba6f9548" }],
+      "vars": { "ENVIRONMENT": "staging", "ALLOWED_ORIGINS": "https://medida3.mitiendanube.com", "TN_EXTRAS_PRODUCT_ID": "381937118", "TN_PRODUCT_MODELS": "{\"381868671\":\"placard-2p\",\"381937130\":\"placard-3p\",\"381937136\":\"placard-espejo\"}" }
+    },
+    "production": {
+      "name": "randy-muebles-configurador",
+      "kv_namespaces": [{ "binding": "CONFIGS", "id": "fb81cd04791e4aa5bd7beebf38115942" }],
+      "vars": { "ENVIRONMENT": "production", "ALLOWED_ORIGINS": "https://medida3.mitiendanube.com", "TN_EXTRAS_PRODUCT_ID": "381937118", "TN_PRODUCT_MODELS": "{\"381868671\":\"placard-2p\",\"381937130\":\"placard-3p\",\"381937136\":\"placard-espejo\"}" }
+    }
+  }
+}

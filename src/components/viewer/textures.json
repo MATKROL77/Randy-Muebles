@@ -1,0 +1,187 @@
+{
+  "nogal": {
+    "size": [
+      2,
+      2
+    ],
+    "maps": [
+      "color",
+      "normal",
+      "roughness"
+    ],
+    "relief": [
+      1,
+      1
+    ],
+    "average": [
+      122,
+      92,
+      70
+    ]
+  },
+  "roble": {
+    "size": [
+      2,
+      2
+    ],
+    "maps": [
+      "color",
+      "normal",
+      "roughness"
+    ],
+    "relief": [
+      1,
+      1
+    ],
+    "average": [
+      201,
+      166,
+      126
+    ]
+  },
+  "piso-madera": {
+    "size": [
+      3.4000000953674316,
+      3.3999998569488525
+    ],
+    "maps": [
+      "color",
+      "normal",
+      "roughness"
+    ],
+    "average": [
+      197,
+      171,
+      136
+    ]
+  },
+  "piso-pinotea": {
+    "size": [
+      1.6999996900558472,
+      3.3999993801116943
+    ],
+    "maps": [
+      "color",
+      "normal",
+      "roughness"
+    ],
+    "average": [
+      168,
+      116,
+      74
+    ]
+  },
+  "piso-cemento": {
+    "size": [
+      3,
+      3.000000238418579
+    ],
+    "maps": [
+      "color",
+      "normal",
+      "roughness"
+    ],
+    "average": [
+      207,
+      203,
+      196
+    ]
+  },
+  "piso-baldosa": {
+    "size": [
+      1.5,
+      1.5
+    ],
+    "maps": [
+      "color",
+      "normal",
+      "roughness"
+    ],
+    "average": [
+      211,
+      198,
+      177
+    ]
+  },
+  "pared": {
+    "size": [
+      3,
+      3.000000238418579
+    ],
+    "maps": [
+      "normal",
+      "roughness"
+    ]
+  },
+  "tela-lino": {
+    "size": [
+      0.2707081392676629,
+      0.27129998803138733
+    ],
+    "maps": [
+      "color",
+      "normal",
+      "roughness"
+    ]
+  },
+  "tela-pana": {
+    "size": [
+      0.28422817052147237,
+      0.273499995470047
+    ],
+    "maps": [
+      "color",
+      "normal",
+      "roughness"
+    ]
+  },
+  "tela-boucle": {
+    "size": [
+      0.335804452696631,
+      0.33090004324913025
+    ],
+    "maps": [
+      "color",
+      "normal",
+      "roughness"
+    ]
+  },
+  "tela-lana": {
+    "size": [
+      0.2700788548673393,
+      0.27570000290870667
+    ],
+    "maps": [
+      "color",
+      "normal",
+      "roughness"
+    ]
+  },
+  "tela-cuero": {
+    "size": [
+      0.4000000059604645,
+      0.40000003576278687
+    ],
+    "maps": [
+      "color",
+      "normal",
+      "roughness"
+    ]
+  },
+  "piedra": {
+    "size": [
+      1.5,
+      1.5
+    ],
+    "maps": [
+      "color",
+      "normal",
+      "roughness"
+    ],
+    "average": [
+      177,
+      157,
+      122
+    ]
+  }
+}

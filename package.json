@@ -1,0 +1,45 @@
+{
+  "name": "medida",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MEDIDA: configuradores 3D de productos a medida, con precio al instante y despiece para el fabricante",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "npx serve out",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p worker && tsc --noEmit -p worker/test",
+    "test": "node --experimental-strip-types --test src/lib/*.test.ts worker/test/*.test.ts",
+    "capture": "node --experimental-strip-types scripts/capture.mjs",
+    "deploy": "next build && node scripts/deploy.mjs",
+    "textures": "NODE_USE_ENV_PROXY=1 node --experimental-strip-types scripts/textures.mjs",
+    "models": "NODE_USE_ENV_PROXY=1 node scripts/models.mjs"
+  },
+  "dependencies": {
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.7.0",
+    "@react-three/postprocessing": "3.1.3",
+    "next": "^15.5.4",
+    "postprocessing": "6.39.5",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "three": "^0.180.0",
+    "three-gpu-pathtracer": "^0.0.24",
+    "three-mesh-bvh": "^0.9.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261112.1",
+    "@eslint/eslintrc": "^3.3.6",
+    "@tailwindcss/postcss": "^4.1.13",
+    "@types/node": "^24.5.2",
+    "@types/react": "^19.1.13",
+    "@types/react-dom": "^19.1.9",
+    "@types/three": "^0.180.0",
+    "eslint": "^9.36.0",
+    "eslint-config-next": "^15.5.4",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.13",
+    "typescript": "^5.9.2",
+    "wrangler": "^4.160.1"
+  }
+}

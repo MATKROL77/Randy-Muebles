@@ -1,0 +1,454 @@
+"use client";
+
+import dynamic from "next/dynamic";
+import Link from "next/link";
+import { useEffect, useMemo, useRef, useState } from "react";
+
+import { IconBulb, IconDoor, IconExplode, IconFront, IconThree } from "@/components/icons";
+import { OtherConfigurators } from "@/components/OtherConfigurators";
+import { SendSheet } from "@/components/SendSheet";
+import { Dimension, DimensionCards, ExpandToggle, Section, Segmented, Stepper, Swatches, SwipeHint, Toggle, useAnimatedNumber, usePortraitPhone, useScrollShrink } from "@/components/controls";
+import { SaveSheet, type SaveChoice } from "@/components/designs/SaveSheet";
+import { IconCheck, IconClose, IconDecor, IconHeart } from "@/components/site/icons";
+import { FLOORS, WALL_COLORS, type FloorType } from "@/components/viewer/constants";
+import { PhotoBadge, PhotoToggle, usePhotoMode } from "@/components/PhotoControls";
+import type { ViewName } from "@/components/viewer/Scene";
+import { fromBase64Url, toBase64Url } from "@/lib/base64url";
+import { undressed } from "@/lib/decor";
+import { addDesign, clearDraft, getDesign, nextName, readDraft, updateDesign, useDesigns, writeDraft } from "@/lib/designStore";
+import { fabricStyle } from "@/lib/swatch";
+import { FABRICS, buildFurniture, defaultFurniture, fabricById, furniturePrice, hasLed, furnitureSummary, moduleValues, normalizeFurniture, specById, withGlobal, withModule, type FurnitureConfig, type Value } from "@/lib/furniture";
+import { DEFAULT_CONFIG, type WardrobeConfig } from "@/lib/model";
+import { shrinkImage } from "@/lib/preview";
+import { currentQuery, rememberQuery } from "@/lib/query";
+import { cutList, money } from "@/lib/quote";
+
+const Viewer3D = dynamic(() => import("@/components/viewer/Scene"), { ssr: false, loading: () => null });
+
+const encode = (c: FurnitureConfig) => toBase64Url(JSON.stringify(c));
+function decode(value: string | null, family: string): FurnitureConfig | null {
+  if (!value) return null;
+  try {
+    const c = normalizeFurniture(JSON.parse(fromBase64Url(value)));
+    return c.family === family ? c : null;
+  } catch {
+    return null;
+  }
+}
+
+type Toast = { text: string; href?: string; hrefLabel?: string; action?: { label: string; run: () => void } };
+
+/**
+ * El configurador de las familias que se arman con parámetros (mesas,
+ * ratonas, muebles de TV, bibliotecas, sillones). Los controles salen de la
+ * descripción de cada familia; el 3D es el mismo del placard.
+ */
+export default function FurnitureConfigurator({ family }: { family: string }) {
+  const spec = specById(family)!;
+  const [config, setConfig] = useState<FurnitureConfig>(() => defaultFurniture(family));
+  const [open, setOpen] = useState(false);
+  const [explode, setExplode] = useState(false);
+  const [lights, setLights] = useState(false);
+  const photo = usePhotoMode();
+  // la alfombra, la tele, las lámparas: se pueden sacar para ver el mueble solo
+  const [deco, setDeco] = useState(true);
+  const [view, setView] = useState<{ name: ViewName; nonce: number }>({ name: "three", nonce: 0 });
+  const [environment, setEnvironment] = useState<{ mode: "room" | "studio"; wall: string; floor: FloorType }>({ mode: "room", wall: WALL_COLORS[0].hex, floor: "madera" });
+  const [ready, setReady] = useState(false);
+  // el módulo tocado en el 3D, para cambiarlo solo (en las familias que lo permiten)
+  const [picked, setPicked] = useState<number | null>(null);
+  // la seña de "tocá un módulo" se va la primera vez que se toca uno
+  const [pickedOnce, setPickedOnce] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  // en el teléfono: el 3D agrandado y la cámara más cerca
+  const portrait = usePortraitPhone();
+  // en el teléfono el 3D arranca agrandado y se achica de a poco siguiendo el dedo
+  const sectionRef = useRef<HTMLElement>(null);
+  const spacerRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const shrink = useScrollShrink(portrait, sectionRef, spacerRef, canvasRef);
+  const [designId, setDesignId] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [sendOpen, setSendOpen] = useState(false);
+  const [toast, setToast] = useState<Toast | null>(null);
+  const captureRef = useRef<(() => Promise<string | null>) | null>(null);
+  const designs = useDesigns().designs;
+  const saved = designs.find((d) => d.id === designId) ?? null;
+
+  useEffect(() => {
+    const q = new URLSearchParams(currentQuery());
+    const stored = getDesign(q.get("id") ?? "");
+    const fromUrl = decode(q.get("c"), family);
+    if (stored && stored.type === family) {
+      setConfig(normalizeFurniture(stored.config));
+      setDesignId(stored.id);
+    } else if (fromUrl) setConfig(fromUrl);
+    else if (q.get("nuevo") !== "1") {
+      const draft = readDraft<FurnitureConfig>(family);
+      const restored = draft ? normalizeFurniture(draft.config) : null;
+      if (restored && restored.family === family && JSON.stringify(restored) !== JSON.stringify(defaultFurniture(family))) {
+        setConfig(restored);
+        setToast({ text: "Recuperamos el diseño que estabas armando.", action: { label: "Empezar de cero", run: () => (clearDraft(family), setConfig(defaultFurniture(family))) } });
+      }
+    }
+    setLoaded(true);
+  }, [family]);
+
+  const build = useMemo(() => buildFurniture(config), [config]);
+  const price = useMemo(() => furniturePrice(config, build), [config, build]);
+  const summary = useMemo(() => furnitureSummary(config, build), [config, build]);
+  const shownPrice = useAnimatedNumber(price);
+  // lo que no se puede elegir con lo que ya está elegido, y por qué
+  const locked = useMemo(() => spec.locks?.(config.values) ?? {}, [spec, config.values]);
+  const shown = useMemo(() => (deco ? build.assembly : undressed(build.assembly)), [deco, build.assembly]);
+  const movable = build.doors + build.drawers > 0;
+
+  // el 3D del placard pide una configuración de placard: se le pasa lo que mira (terminaciones y si hay puertas)
+  const look = useMemo<WardrobeConfig>(
+    () => ({ ...DEFAULT_CONFIG, doors: build.doors ? "hinged" : "none", bodyMaterial: config.body, doorMaterial: config.front, led: { ...DEFAULT_CONFIG.led, sensor: false } }),
+    [build.doors, config.body, config.front],
+  );
+
+  const capturePreview = async (wait = 1500) => {
+    const shot = captureRef.current ? await Promise.race([captureRef.current(), new Promise<null>((r) => setTimeout(() => r(null), wait))]) : null;
+    return shot ? shrinkImage(shot) : null;
+  };
+
+  // guardado automático: dirección, borrador y, si se edita un diseño guardado, el diseño
+  useEffect(() => {
+    if (!loaded) return;
+    const id = setTimeout(() => {
+      rememberQuery(`?${designId ? `id=${designId}&` : ""}c=${encode(config)}`);
+      writeDraft(family, config);
+      const current = designId ? getDesign(designId) : null;
+      if (current && JSON.stringify(current.config) !== JSON.stringify(config)) updateDesign(current.id, { config, summary, price });
+    }, 350);
+    return () => clearTimeout(id);
+    // summary y price salen de config
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config, designId, loaded, family]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const id = setTimeout(() => setToast(null), 7000);
+    return () => clearTimeout(id);
+  }, [toast]);
+
+  const set = (key: string, value: Value) => {
+    // cambiar algo para todo el mueble pisa lo que cada módulo tenía propio en eso
+    setConfig((c) => withGlobal(c, key, value));
+    // al sumar la luz, se prende: así se ve lo que se acaba de agregar
+    if (key === "led") setLights(value === true);
+  };
+  const goView = (name: ViewName) => setView((v) => ({ name, nonce: v.nonce + 1 }));
+
+  const save = async ({ name, favorite, cart }: SaveChoice) => {
+    const preview = await capturePreview(4000);
+    const data = { name, favorite, cart, config, summary, price };
+    if (saved) updateDesign(saved.id, { ...data, preview: preview ?? saved.preview });
+    else setDesignId(addDesign({ type: family, ...data, preview }).id);
+    setSaveOpen(false);
+    setToast({ text: cart ? "Agregado a tu carrito de consulta." : "Guardado en tus favoritos.", href: "/mis-disenos/", hrefLabel: "Ver mis diseños" });
+  };
+
+  // al tocar un módulo, sus opciones quedan a la vista: en el teléfono el 3D se achica y el
+  // panel sube; en la compu el panel vuelve arriba, donde están
+  const collapse = shrink.collapse;
+  useEffect(() => {
+    if (picked === null) return;
+    setPickedOnce(true);
+    if (portrait) collapse();
+    else panelRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    // solo al cambiar de módulo
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [picked]);
+
+  const link = typeof window === "undefined" ? "" : `${window.location.origin}/demo/${family}/?c=${encode(config)}`;
+  const message = [`Hola, armé este mueble a medida en la web:`, "", `${spec.label} · ${summary.dimensions}`, ...summary.lines, `Precio estimado: ${money(price)}`, "Valores orientativos de muestra; el fabricante debe validar medidas y costos.", "", `Mi diseño: ${link}`].join("\n");
+
+  return (
+    <div className="lg:grid lg:h-dvh lg:grid-cols-[minmax(0,1fr)_440px]">
+      <section ref={sectionRef} className={`sticky top-0 z-20 overflow-hidden bg-[#f0efed] max-lg:rounded-b-[1.75rem] lg:relative lg:z-auto lg:h-full ${portrait ? "h-[78dvh]" : "h-[max(46dvh,300px)]"}`}>
+        <div ref={canvasRef} className={`absolute inset-0 transition-opacity duration-700 ${ready ? "opacity-100" : "opacity-0"}`}>
+          <Viewer3D
+            config={look}
+            assembly={shown}
+            selection={spec.modules && picked !== null ? { run: 0, module: picked } : null}
+            onSelect={spec.modules ? (_run: number, m: number) => setPicked((p) => (p === m ? null : m)) : () => {}}
+            open={open}
+            leafOffsets={{}}
+            xray={false}
+            explode={explode}
+            lights={lights && hasLed(config)}
+            environment={environment}
+            view={view}
+            fabric={fabricById(config.fabric).color}
+            weave={fabricById(config.fabric).weave}
+            confine
+            onReady={() => setTimeout(() => setReady(true), 120)}
+            captureRef={captureRef}
+            zoom={shrink.zoom}
+            framing={portrait ? 0.8 : undefined}
+            photo={photo.on}
+            onPhoto={photo.onStatus}
+          />
+        </div>
+        <PhotoBadge status={photo.status} />
+        <SwipeHint show={portrait && shrink.atTop} />
+        {/* cada módulo se edita solo: se avisa sobre el 3D, que es donde se toca */}
+        {spec.modules && (
+          <p aria-hidden={picked !== null || pickedOnce} className={`glass pointer-events-none absolute bottom-[4.7rem] left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-medium text-ink transition-opacity duration-500 ${ready && picked === null && !pickedOnce ? "opacity-100" : "opacity-0"}`}>
+            {touch(spec.modules.label)} para {fem(spec.modules.label) ? "editarla" : "editarlo"}
+          </p>
+        )}
+
+        {/* abajo a la izquierda, a la altura del aviso de la foto realista */}
+        <button
+          type="button"
+          aria-pressed={deco}
+          onClick={() => setDeco((d) => !d)}
+          className="glass deco-toggle flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium"
+          title={deco ? "Sacar la decoración" : "Mostrar la decoración"}
+        >
+          <IconDecor width={15} height={15} />
+          {deco ? "Con decoración" : "Sin decoración"}
+        </button>
+
+        <header className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-end gap-3 p-3 sm:p-4">
+          <Link href="/mis-disenos/" className="glass pointer-events-auto flex items-center gap-2 rounded-full px-3.5 py-2 text-sm font-medium">
+            <IconHeart width={17} height={17} />
+            <span className="hidden sm:inline">Mis diseños</span>
+            {designs.length > 0 && <span className="grid min-w-5 place-items-center rounded-full bg-ink px-1.5 text-[0.68rem] font-semibold leading-5 text-on-dark">{designs.length}</span>}
+          </Link>
+        </header>
+
+        <div className="absolute inset-x-0 bottom-3 z-10 flex justify-center px-3">
+          <div className="toolbar max-w-full overflow-x-auto [scrollbar-width:none]">
+            {(
+              [
+                ["front", "Frente", IconFront],
+                ["three", "3/4", IconThree],
+              ] as const
+            ).map(([id, label, Icon]) => (
+              <button key={id} type="button" className="tool px-2.5" title={`Vista ${label.toLowerCase()}`} aria-label={`Vista ${label.toLowerCase()}`} onClick={() => goView(id)}>
+                <Icon />
+              </button>
+            ))}
+            <span className="tool-sep shrink-0" />
+            {movable && (
+              <button type="button" className="tool" aria-pressed={open} onClick={() => setOpen((o) => !o)} aria-label={open ? "Cerrar" : "Abrir"}>
+                <IconDoor />
+                <span className="hidden sm:inline">{open ? "Cerrar" : "Abrir"}</span>
+              </button>
+            )}
+            {hasLed(config) && (
+              <button type="button" className="tool" aria-pressed={lights} onClick={() => setLights((l) => !l)} title="Encender las luces" aria-label="Luces">
+                <IconBulb />
+                <span className="hidden sm:inline">Luces</span>
+              </button>
+            )}
+            <PhotoToggle on={photo.on} toggle={photo.toggle} />
+            <button type="button" className="tool max-lg:hidden" aria-pressed={explode} onClick={() => setExplode((x) => !x)} title="Separar las piezas">
+              <IconExplode />
+              <span className="hidden sm:inline">Explotar</span>
+            </button>
+            <ExpandToggle big={portrait && shrink.expanded} onToggle={() => (shrink.expanded ? shrink.collapse() : shrink.expand())} />
+          </div>
+        </div>
+      </section>
+      {/* lo que el 3D se achica lo ocupa este espacio: el panel queda pegado a su borde */}
+      {portrait && <div ref={spacerRef} aria-hidden="true" className="lg:hidden" />}
+
+      <aside className="flex flex-col border-line bg-surface lg:min-h-0 lg:border-l">
+        {/* en el teléfono, el panel arranca con su título; siempre desplegado */}
+        <div className="px-5 pt-5 lg:hidden">
+          <p className="eyebrow text-ink">Personalizar tu mueble</p>
+          <p className="mt-1 text-sm text-ink-2">Medidas · Materiales · Accesorios</p>
+        </div>
+        <div ref={panelRef} className="flex-1 space-y-8 overflow-y-auto px-5 pb-28 pt-6 max-lg:space-y-6 max-lg:pt-3 lg:pb-8">
+          {spec.modules && (
+            <ModulePanel
+              label={spec.modules.label}
+              picked={picked}
+              controls={spec.modules.controls}
+              values={picked === null ? {} : moduleValues(config, picked)}
+              changed={picked !== null && !!config.modules?.[String(picked)]}
+              onChange={(key, value) => picked !== null && setConfig((c) => withModule(c, picked, key, value))}
+              onReset={() => picked !== null && setConfig((c) => withModule(c, picked, null))}
+              onDone={() => setPicked(null)}
+            />
+          )}
+          {/* en el teléfono el título ya está arriba (en la ventana y en "Personalizar tu mueble") */}
+          <Section title={spec.title} hint={summary.dimensions} phoneTitle={false}>
+            {spec.controls.map((c) => {
+              const v = config.values[c.key];
+              const why = locked[c.key];
+              if (c.type === "size") {
+                if (why) return null;
+                // en el teléfono las medidas van juntas, en tarjetas, donde aparece la primera
+                const sizes = spec.controls.filter((x): x is Extract<typeof x, { type: "size" }> => x.type === "size" && !locked[x.key]);
+                return (
+                  <div key={c.key} className="contents">
+                    {sizes[0]?.key === c.key && (
+                      <div className="lg:hidden">
+                        <DimensionCards items={sizes.map((x) => ({ key: x.key, label: x.label, value: config.values[x.key] as number, min: x.min, max: x.max }))} onChange={(key, mm) => set(key, mm)} />
+                      </div>
+                    )}
+                    <div className="max-lg:hidden">
+                      <Dimension label={c.label} value={v as number} min={c.min} max={c.max} onChange={(mm) => set(c.key, mm)} />
+                    </div>
+                  </div>
+                );
+              }
+              // un número que no aplica con lo elegido (los cajones de una losa) no se muestra
+              if (c.type === "count") return why ? null : <Stepper key={c.key} label={c.label} value={v as number} min={c.min} max={c.max} onChange={(n) => set(c.key, n)} />;
+              if (c.type === "toggle") return <Toggle key={c.key} label={c.label} hint={why ?? c.hint} disabled={!!why} checked={v as boolean} onChange={(on) => set(c.key, on)} />;
+              const reasons = [...new Set(c.options.map((o) => locked[`${c.key}:${o.id}`]).filter(Boolean))];
+              return (
+                <div key={c.key} className="space-y-2">
+                  <p className="text-sm">{c.label}</p>
+                  <Segmented
+                    value={v as string}
+                    options={c.options.map((o) => ({ ...o, disabled: !!locked[`${c.key}:${o.id}`], title: locked[`${c.key}:${o.id}`] }))}
+                    onChange={(id) => set(c.key, id)}
+                    size={c.options.length > 3 ? "sm" : "md"}
+                  />
+                  {reasons.length > 0 && <p className="text-xs text-ink-2">{reasons.join(". ")}.</p>}
+                </div>
+              );
+            })}
+          </Section>
+
+          <Section title="Terminaciones">
+            {spec.upholstered && (
+              <div className="space-y-2.5">
+                <p className="text-sm">
+                  Tapizado: <span className="text-ink-2">{fabricById(config.fabric).name}</span>
+                </p>
+                <div className="flex flex-wrap gap-2.5">
+                  {FABRICS.map((f) => (
+                    <button key={f.id} type="button" title={f.name} aria-label={`Tapizado ${f.name}`} aria-pressed={config.fabric === f.id} onClick={() => setConfig((c) => ({ ...c, fabric: f.id }))} className={`swatch size-10 rounded-full border-2 ${config.fabric === f.id ? "border-navy" : "border-surface ring-1 ring-line"}`} style={fabricStyle(f)} />
+                  ))}
+                </div>
+              </div>
+            )}
+            <Swatches label={spec.bodyLabel} value={config.body} onChange={(body) => setConfig((c) => ({ ...c, body }))} />
+            {spec.frontLabel && <Swatches label={spec.frontLabel} value={config.front} onChange={(front) => setConfig((c) => ({ ...c, front }))} />}
+          </Section>
+
+          <Section title="Tu ambiente" hint="Solo para imaginarlo: no cambia el precio">
+            <Segmented value={environment.mode} options={[{ id: "room", label: "Showroom" }, { id: "studio", label: "Fondo liso" }]} onChange={(mode) => setEnvironment((e) => ({ ...e, mode }))} />
+            {environment.mode === "room" && (
+              <div className="fade-in flex flex-wrap gap-2.5">
+                {WALL_COLORS.map((w) => (
+                  <button key={w.id} type="button" title={w.name} aria-label={`Pared ${w.name.toLowerCase()}`} aria-pressed={environment.wall === w.hex} onClick={() => setEnvironment((e) => ({ ...e, wall: w.hex }))} className={`swatch size-9 rounded-full border-2 ${environment.wall === w.hex ? "border-ink" : "border-surface ring-1 ring-line"}`} style={{ background: w.hex }} />
+                ))}
+                {FLOORS.map((f) => (
+                  <button key={f.id} type="button" title={f.name} aria-label={`Piso ${f.name.toLowerCase()}`} aria-pressed={environment.floor === f.id} onClick={() => setEnvironment((e) => ({ ...e, floor: f.id }))} className={`swatch size-9 rounded-lg border-2 ${environment.floor === f.id ? "border-ink" : "border-surface ring-1 ring-line"}`} style={{ background: f.swatch }} />
+                ))}
+              </div>
+            )}
+          </Section>
+
+          <OtherConfigurators current={family} />
+        </div>
+
+        <div className="price-bar fixed inset-x-0 bottom-0 z-30 px-4 py-2.5 lg:static">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[0.62rem] font-semibold uppercase tracking-[0.18em] text-ink-2">Precio estimado</p>
+              <p className="font-display text-lg leading-tight tabular-nums">{money(Math.round(shownPrice / 1000) * 1000)}</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <button type="button" onClick={() => setSaveOpen(true)} className={`btn btn-sm h-9 px-3 text-[0.8rem] ${saved ? "btn-secondary" : "btn-ghost"}`} aria-label={saved ? "Diseño guardado: cambiar nombre o dónde está" : "Guardar este diseño"}>
+                {saved ? <IconCheck /> : <IconHeart />}
+                <span className="hidden min-[420px]:inline">{saved ? "Guardado" : "Guardar"}</span>
+              </button>
+              <button type="button" onClick={() => setSendOpen(true)} className="btn btn-primary btn-sm h-9 px-3.5 text-[0.8rem]">
+                Enviar al taller
+              </button>
+            </div>
+          </div>
+          <p className="mt-1 text-[10px] leading-snug text-ink-2">Valores orientativos de muestra. El fabricante debe confirmar medidas y costos antes de cotizar.</p>
+        </div>
+      </aside>
+
+      {sendOpen && (
+        <SendSheet workshop={null} title={`${spec.label} a medida`} noPdf summary={summary} price={price} pdf={null} failed={false} rows={cutList(build.parts)} message={message} designLink={link} workshopHref="" onClose={() => setSendOpen(false)} />
+      )}
+      {saveOpen && <SaveSheet saved={saved} suggestedName={nextName(spec.label)} onSave={save} onClose={() => setSaveOpen(false)} />}
+      {toast && (
+        <div role="status" className="toast fixed inset-x-3 bottom-28 z-40 mx-auto flex max-w-md items-center gap-3 rounded-2xl bg-ink px-4 py-3 text-sm text-on-dark shadow-xl lg:bottom-6 lg:left-6 lg:right-auto lg:mx-0">
+          <span className="flex-1">{toast.text}</span>
+          {toast.href && (
+            <Link href={toast.href} className="shrink-0 font-semibold underline underline-offset-4">
+              {toast.hrefLabel}
+            </Link>
+          )}
+          {toast.action && (
+            <button type="button" className="shrink-0 font-semibold underline underline-offset-4" onClick={() => (toast.action!.run(), setToast(null))}>
+              {toast.action.label}
+            </button>
+          )}
+          <button type="button" aria-label="Cerrar el aviso" className="-mr-1 grid size-7 shrink-0 place-items-center rounded-full hover:bg-white/15" onClick={() => setToast(null)}>
+            <IconClose width={15} height={15} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Lo de un módulo solo: aparece al tocar un módulo en el 3D (queda marcado),
+ * con sus controles; lo demás del mueble no cambia. Sin módulo elegido, una
+ * línea que explica que se puede.
+ */
+/** "Columna" va en femenino y "Módulo" en masculino: el cartel concuerda con la palabra */
+const fem = (label: string) => label.toLowerCase().endsWith("a");
+const touch = (label: string) => `Tocá ${fem(label) ? "una" : "un"} ${label.toLowerCase()}`;
+
+function ModulePanel({ label, picked, controls, values, changed, onChange, onReset, onDone }: {
+  label: string;
+  picked: number | null;
+  controls: NonNullable<ReturnType<typeof specById>>["controls"];
+  values: Record<string, Value>;
+  changed: boolean;
+  onChange: (key: string, value: Value) => void;
+  onReset: () => void;
+  onDone: () => void;
+}) {
+  if (picked === null) return <p className="text-xs text-ink-2 lg:rounded-2xl lg:border lg:border-line lg:px-4 lg:py-3">{touch(label)} en el 3D para {fem(label) ? "cambiarla sola" : "cambiarlo solo"}.</p>;
+  return (
+    <section className="space-y-4 rounded-2xl border border-navy/30 bg-paper/60 p-4" aria-label={`${label} ${picked + 1}`}>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="eyebrow">
+          {label} {picked + 1}
+        </h2>
+        <button type="button" className="text-xs font-medium underline-offset-2 hover:underline" onClick={onDone}>
+          Listo
+        </button>
+      </div>
+      {controls.map((c) => {
+        const v = values[c.key];
+        // la cantidad de cajones solo cuenta cuando el módulo es de cajones
+        if (c.key === "drawers" && values.kind !== undefined && values.kind !== "cajones") return null;
+        if (c.type === "count") return <Stepper key={c.key} label={c.label} value={v as number} min={c.min} max={c.max} onChange={(n) => onChange(c.key, n)} />;
+        if (c.type === "choice")
+          return (
+            <div key={c.key} className="space-y-2">
+              <p className="text-sm">{c.label}</p>
+              <Segmented value={v as string} options={c.options} onChange={(id) => onChange(c.key, id)} size={c.options.length > 3 ? "sm" : "md"} />
+            </div>
+          );
+        return null;
+      })}
+      {changed && (
+        <button type="button" className="text-xs text-ink-2 underline underline-offset-2" onClick={onReset}>
+          Igual que el resto
+        </button>
+      )}
+    </section>
+  );
+}

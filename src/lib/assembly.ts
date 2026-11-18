@@ -1,0 +1,1433 @@
+/**
+ * Arma el placard pieza por pieza.
+ *
+ * De acá salen a la vez el modelo 3D y el despiece: cada pieza trae su caja en
+ * el espacio (para dibujarla) y su medida de corte (para la seccionadora). Por
+ * eso lo que el cliente ve es exactamente lo que el taller corta.
+ *
+ * Cada pieza tiene un id estable ("r0:m1:s2" es el segundo estante del módulo
+ * 1 del tramo de frente). El 3D usa ese id para animar la misma pieza de una
+ * medida a la otra en vez de reemplazarla: así todo se estira con resorte.
+ *
+ * Coordenadas en mm, locales a cada tramo: x a lo largo del tramo, y hacia
+ * arriba, z hacia el frente. El fondo del tramo está en z = 0. El tramo
+ * lateral de un placard en L se arma igual y después se gira 90°.
+ *
+ * Construcción: laterales y divisores pasantes de piso a techo, techo y piso
+ * por módulo entre ellos. Así ninguna pieza horizontal supera el ancho de un
+ * módulo y todo entra en una placa estándar, aunque el placard mida 4 metros.
+ */
+
+import { catalog } from "./catalog.ts";
+import { washPart, type Wash } from "./led.ts";
+import {
+  leafLook,
+  CURVE_RADIUS,
+  DRAWER_PITCH,
+  PLINTH_HEIGHT,
+  TOP_SHELF_DROP,
+  cornerModule,
+  drawerZone,
+  heightAt,
+  moduleOffsets,
+  runSpan,
+  type WardrobeConfig,
+} from "./model.ts";
+
+export type Vec3 = [number, number, number];
+
+export type PartKind =
+  | "side"
+  | "divider"
+  | "top"
+  | "bottom"
+  | "plinth"
+  | "back"
+  | "shelf"
+  | "fixed-shelf"
+  | "rod"
+  | "drawer-front"
+  | "drawer-side"
+  | "drawer-end"
+  | "drawer-bottom"
+  | "door"
+  | "sliding-door"
+  | "blind"
+  | "curved-shelf"
+  | "handle"
+  | "groove"
+  | "mirror"
+  | "glass"
+  | "frame"
+  | "led"
+  | "glow";
+
+/** "soft": caja de cantos redondeados, para almohadones y tapizados */
+export type Geometry = "box" | "soft" | "cushion" | "puff" | "cyl" | "cone" | "shade" | "bend" | "sweep" | "trapezoid" | "quarter" | "knob" | "glow" | "arc" | "model" | "garment" | "none";
+
+/** las formas de la ambientación de un placard: prendas colgadas, su percha, ropa doblada, calzado y guardado */
+export type GarmentShape = "shirt" | "tee" | "sweater" | "jacket" | "coat" | "dress" | "pants" | "hanger" | "folded" | "shoe" | "box" | "basket";
+
+/**
+ * Mecanizados de una pieza: lo que el taller tiene que hacer además de cortar
+ * y cantear. Las medidas van en mm, mirando la pieza como en el dibujo.
+ */
+export type Feature =
+  /** canal fresado para el perfil LED; offset: del canto frontal al centro del canal */
+  | { type: "led-groove"; face: "bottom" | "left" | "right"; offset: number }
+  /** cazoletas de 35 mm; at: alturas desde abajo */
+  | { type: "hinge-holes"; edge: "left" | "right"; at: number[] }
+  /** agujeros del tirador, desde la esquina inferior izquierda mirando el frente */
+  | { type: "handle-holes"; points: [number, number][] }
+  /** ranuras decorativas en CNC: posición de cada una y su largo */
+  | { type: "grooves"; xs: number[]; from: number; lengths: number[] }
+  | { type: "mirror" }
+  /** puntas cortadas en ángulo (techo inclinado) */
+  | { type: "bevel"; degrees: number };
+
+export type Cut = {
+  /** largo en el sentido de la veta */
+  length: number;
+  width: number;
+  thickness: number;
+  /** cuántos lados largos y cortos llevan tapacanto */
+  band: { long: 0 | 1 | 2; short: 0 | 1 | 2 };
+  /** canto curvo, en mm, para los terminales */
+  curvedBand?: number;
+  /** aclaración para el taller: ángulos, curvas, trapecios */
+  note?: string;
+  features?: Feature[];
+};
+
+export type Part = {
+  id: string;
+  label: string;
+  kind: PartKind;
+  /** id de material del catálogo, o "back", "metal", "mirror", "glass", "led", "glow" */
+  material: string;
+  run: number;
+  module: number | null;
+  /** caja sin rotar: esquina mínima y tamaño, en mm */
+  position: Vec3;
+  size: Vec3;
+  /** giro sobre su centro, en radianes (techos inclinados) */
+  rotationZ?: number;
+  geometry: Geometry;
+  /** trapecio: alto a la izquierda y a la derecha; size[1] es el mayor */
+  trapezoid?: { left: number; right: number };
+  /** cuarto de elipse: hacia qué lado del tramo sale */
+  quarter?: "left" | "right";
+  /** la luz de una tira en el 3D rápido: la caja es el hueco que alumbra (`lib/led.ts`) */
+  wash?: Wash;
+  /** giro sobre el eje vertical, en radianes (módulos de un sillón curvo) */
+  rotationY?: number;
+  /** radio de los cantos de un almohadón ("cushion"), en mm */
+  radius?: number;
+  /**
+   * Una pieza curva (el respaldo de un sillón curvo): una sección redondeada
+   * barrida a lo largo de un arco. Centro del arco (cx, cz) en las mismas
+   * coordenadas que la posición; radios interior y exterior (mm); ángulo de
+   * arranque y largo del arco (radianes, punto = centro + r·(sen θ, cos θ));
+   * redondeo de los cantos (mm). La posición y la medida son su caja.
+   */
+  arc?: { cx: number; cz: number; rIn: number; rOut: number; start: number; length: number; round: number };
+  /** un objeto de ambientación escaneado (public/models/<model>.glb); la medida es la suya */
+  model?: string;
+  /** capitoné: la cara de arriba (o la de adelante) se hunde en una grilla de botones */
+  tuft?: { face: "top" | "front"; nx: number; ny: number; depth: number };
+  /** arrugado de tela (mm de onda): sábanas, acolchados, almohadas */
+  wrinkle?: number;
+  /**
+   * Caída de una tela sobre lo que cubre (un acolchado sobre el colchón): lo que
+   * sobra del ancho `w` y del largo `d` (mm, desde atrás) dobla y cuelga, hasta `drop`.
+   */
+  drape?: { w: number; d: number; drop: number };
+  /**
+   * Relleno: cuánto se infla (mm) el medio de la cara más grande de un
+   * almohadón; las caras chicas, en proporción. Un almohadón de verdad no es una caja.
+   */
+  puff?: number;
+  /**
+   * Almohadón de adorno: el espesor (en el eje más fino) baja hacia los bordes
+   * hasta esta fracción en las puntas, que quedan pellizcadas como en uno de verdad.
+   */
+  pinch?: number;
+  /** vivo: un cordón de tela de este radio (mm) que corre por el canto de arriba y el de abajo del almohadón */
+  welt?: number;
+  /**
+   * Esquina curva (geometry "bend"): un cuarto de caño de espesor `t`, del
+   * radio de la caja (size[0] = size[1]), que une una tapa con un lateral a lo
+   * largo de la profundidad. `corner` dice qué esquina del frente redondea.
+   */
+  bend?: { corner: "tl" | "tr" | "bl" | "br"; t: number };
+  /**
+   * Placa con las esquinas del frente redondeadas (mm): arriba a la izquierda,
+   * arriba a la derecha, abajo a la derecha y abajo a la izquierda. Se ve de
+   * frente (plano x-y) y tiene el espesor en z.
+   */
+  corners?: [number, number, number, number];
+  /**
+   * Placa horizontal (una tapa) con su contorno en planta: esquinas
+   * redondeadas (`corners`, mm: atrás a la izquierda, atrás a la derecha,
+   * adelante a la derecha, adelante a la izquierda), elipse (`ellipse`, o la
+   * mitad izquierda o derecha de una) y, si es un marco, el ancho del aro
+   * (`ring`, mm): adentro queda hueco.
+   */
+  plan?: { corners?: [number, number, number, number]; ellipse?: boolean | "left" | "right"; ring?: number };
+  /**
+   * Pieza barrida (geometry "sweep"): una sección de cantos redondeados que
+   * recorre una curva cualquiera en planta, como el sillón orgánico. `path`,
+   * el recorrido (mm, coordenadas del mueble); `from` y `to`, de qué lado a
+   * qué lado de la curva va la sección (positivo hacia adelante); `heights`,
+   * el alto en cada punto del recorrido (la sección arranca en position[1]).
+   */
+  sweep?: { path: [number, number][]; from: number; to: number; heights: number[]; round: number };
+  /**
+   * Prenda o accesorio de un placard (geometry "garment"): una forma hecha a la
+   * medida de su caja. `variant` elige entre las variantes de la forma (los
+   * pliegues, el ruedo, el modelo de calzado) y `colors`, los colores propios
+   * de lo que lleva más de uno (suela y capellada, caja y etiqueta, percha y gancho).
+   */
+  garment?: { shape: GarmentShape; variant: number; colors?: string[] };
+  /** ambientación (alfombra, tele, libros): se dibuja, pero no es parte del mueble ni del precio */
+  decor?: boolean;
+  /** null para lo que no sale de placa */
+  cut: Cut | null;
+  /** las puertas batientes giran sobre este borde al abrir */
+  /** "bottom": puerta rebatible, que se abre hacia adelante girando sobre su canto de abajo */
+  /** "lid": una tapa horizontal con la bisagra atrás (hacia la cabecera), que se levanta: la trampilla de una cama */
+  hinge?: "left" | "right" | "bottom" | "lid";
+  /** herrajes y terminaciones que se mueven con la pieza, en coordenadas de la pieza */
+  details?: Part[];
+  /** desplazamiento al abrir (cajones y hojas corredizas), en mm */
+  openShift?: Vec3;
+  /** desplazamiento en la vista explotada, en mm */
+  explode: Vec3;
+  /** frentes: se vuelven translúcidos en la vista de rayos X */
+  front?: boolean;
+  /** hoja corrediza: en qué riel va, dónde está cerrada y cuánto puede correr el conjunto */
+  slide?: { track: 0 | 1; index: number; home: number; width: number; from: number; to: number };
+  /** puerta batiente: hasta qué ángulo abre (radianes) y cuándo arranca dentro del movimiento (0 a 1) */
+  openAngle?: number;
+  openDelay?: number;
+  /** cajón que no puede salir porque una puerta abierta le queda delante */
+  drawerBlocked?: boolean;
+};
+
+export type HardwareKey =
+  | "hinge"
+  | "slidePair"
+  | "slideSpacer"
+  | "rod"
+  | "rodSupport"
+  | "slidingKit"
+  | "slidingTrack"
+  | "handle"
+  | "fittings"
+  | "mirror"
+  | "glass"
+  | "frameProfile"
+  | "grooving"
+  | "ledStrip"
+  | "ledProfile"
+  | "powerSupply"
+  | "sensor"
+  | "rgbController";
+
+export type HardwareLine = {
+  key: HardwareKey;
+  label: string;
+  qty: number;
+  unit: "u" | "m" | "m²";
+};
+
+export type RunAssembly = {
+  index: number;
+  /** giro del tramo alrededor del eje vertical y dónde queda su origen */
+  rotationY: number;
+  offset: Vec3;
+  span: number;
+  parts: Part[];
+};
+
+export type Assembly = {
+  runs: RunAssembly[];
+  hardware: HardwareLine[];
+  counts: { modules: number; doors: number; drawers: number; trays: number; angledCuts: number; curvedCuts: number };
+  ledMeters: number;
+  /** caja que encierra todo el placard, en coordenadas de mundo (mm) */
+  bounds: { min: Vec3; max: Vec3 };
+  /** lo que tiene que entrar en la habitación: el mueble y lo que lo acompaña */
+  room?: { min: Vec3; max: Vec3 };
+  /** qué paredes necesita el mueble en el showroom: ninguna, una atrás, o dos (placard en L) */
+  walls?: "none" | "back" | "l-left" | "l-right";
+};
+
+/** bisagras por puerta según su alto: lo que recomiendan los fabricantes de herrajes */
+export function hingesFor(doorHeight: number): number {
+  if (doorHeight <= 900) return 2;
+  if (doorHeight <= 1600) return 3;
+  if (doorHeight <= 2000) return 4;
+  return 5;
+}
+
+const SLIDING_OVERLAP = 40;
+/** en la esquina de una L, lo que queda del lateral: un parante adelante */
+const CORNER_POST = 100;
+
+/** una hoja corrediza cerrada: su riel (0 adelante) y lo que tapa */
+export type LeafSpan = { track: 0 | 1; left: number; width: number };
+
+/**
+ * Una hoja por módulo, como en un placard real: cada hoja tapa su módulo y se
+ * solapa con la vecina sobre el divisor. Las hojas alternan riel, así cada
+ * una puede correrse por delante o por detrás de la de al lado.
+ */
+export function slidingLeafSpans(from: number, to: number, dividerCenters: number[]): LeafSpan[] {
+  const n = dividerCenters.length + 1;
+  return Array.from({ length: n }, (_, k) => {
+    const left = k === 0 ? from : dividerCenters[k - 1] - SLIDING_OVERLAP / 2;
+    const right = k === n - 1 ? to : dividerCenters[k] + SLIDING_OVERLAP / 2;
+    return { track: k % 2 === 0 ? 0 : 1, left, width: right - left };
+  });
+}
+
+/**
+ * Los huecos que una persona puede abrir corriendo hojas: en cada riel, las
+ * hojas de la izquierda se apilan contra un extremo y las de la derecha contra
+ * el otro. `leaves` va de izquierda a derecha.
+ */
+export function slidingOpenings(leaves: { track: 0 | 1; width: number }[], from: number, to: number): [number, number][] {
+  const tracks = ([0, 1] as const).map((tr) => leaves.filter((l) => l.track === tr).map((l) => l.width));
+  const sum = (ws: number[]) => ws.reduce((a, b) => a + b, 0);
+  const out: [number, number][] = [];
+  for (let a = 0; a <= tracks[0].length; a++) {
+    for (let b = 0; b <= tracks[1].length; b++) {
+      const left = from + Math.max(sum(tracks[0].slice(0, a)), sum(tracks[1].slice(0, b)));
+      const right = to - Math.max(sum(tracks[0].slice(a)), sum(tracks[1].slice(b)));
+      if (right - left > 1) out.push([left, right]);
+    }
+  }
+  return out;
+}
+
+/** luz entre el frente de un cajón y el canto de la hoja corrida */
+const SLIDING_DRAWER_CLEAR = 10;
+/** un cajón más angosto que esto no sirve: se deja del ancho del módulo */
+const MIN_DRAWER_FRONT = 300;
+/** lo que ocupan los rieles adelante en un placard corredizo */
+const SLIDING_RESERVE = 90;
+/** retiro de los estantes para que la puerta batiente cierre sin tocar */
+const HINGED_SETBACK = 20;
+/** el perfil de una tira LED: cuánto asoma de la placa y cuánto mide de ancho, en mm */
+export const LED_PROFILE = [9, 16] as const;
+const DOOR_GAP = 3;
+const deg = (rad: number) => Math.round((Math.abs(rad) * 180) / Math.PI);
+
+/** perímetro de un cuarto de elipse (Ramanujan) */
+function quarterEllipse(a: number, b: number): number {
+  return (Math.PI * (3 * (a + b) - Math.sqrt((3 * a + b) * (a + 3 * b)))) / 4;
+}
+
+type Ctx = {
+  config: WardrobeConfig;
+  hw: Record<HardwareKey, HardwareLine>;
+  counts: Assembly["counts"];
+  ledMeters: number;
+  litModules: number;
+};
+
+/** terminaciones y tirador de un frente, en coordenadas del frente */
+/**
+ * `flush`: tirador al ras, para las hojas del riel de atrás. Entre riel y riel
+ * quedan 12 mm: un barral común chocaría con la hoja que le pasa por delante.
+ */
+function frontDetails(
+  ctx: Ctx,
+  id: string,
+  w: number,
+  h: { left: number; right: number },
+  handleAt: "left" | "right" | "drawer" | null,
+  flush = false,
+  sliding = false,
+): Part[] {
+  const { config } = ctx;
+  const t = catalog.board.thickness;
+  const hMax = Math.max(h.left, h.right);
+  const hMin = Math.min(h.left, h.right);
+  const sloped = h.left !== h.right;
+  const out: Part[] = [];
+  const detail = (p: Omit<Part, "run" | "module" | "explode" | "cut"> & { cut?: Cut | null }) =>
+    out.push({ run: 0, module: null, explode: [0, 0, 0], cut: null, ...p });
+  let faceZ: number = t;
+
+  if (config.doorStyle === "grooved" && handleAt !== "drawer") {
+    const pitch = 60;
+    const count = Math.max(2, Math.floor((w - 80) / pitch));
+    const first = (w - (count - 1) * pitch) / 2;
+    for (let i = 0; i < count; i++) {
+      const x = first + i * pitch;
+      // con pendiente cada ranura llega hasta donde llega la puerta en su lugar
+      const hx = h.left + ((h.right - h.left) * x) / w;
+      detail({
+        id: `${id}:g${i}`,
+        label: "Ranura",
+        kind: "groove",
+        material: "groove",
+        position: [x - 2.5, 70, t],
+        size: [5, hx - 140, 0.8],
+        geometry: "box",
+      });
+    }
+    ctx.hw.grooving.qty += 1;
+  }
+
+  if (config.doorStyle === "mirror" && handleAt !== "drawer") {
+    detail({
+      id: `${id}:mirror`,
+      label: "Espejo",
+      kind: "mirror",
+      material: "mirror",
+      position: [4, 4, t],
+      size: [w - 8, hMax - 8, 4],
+      geometry: sloped ? "trapezoid" : "box",
+      trapezoid: sloped ? { left: h.left - 8, right: h.right - 8 } : undefined,
+    });
+    ctx.hw.mirror.qty += ((w - 8) * (hMax - 8)) / 1e6;
+    faceZ = t + 4;
+  }
+
+  if (config.doorStyle === "glass" && handleAt !== "drawer") {
+    const bar = 22;
+    const deep = 20;
+    // la hoja corrediza lleva a los costados el perfil tirador, más ancho y más grueso
+    const stile = sliding ? 34 : bar;
+    const stileDeep = sliding ? 28 : deep;
+    detail({ id: `${id}:fl`, label: "Perfil", kind: "frame", material: "metal", position: [0, 0, 0], size: [stile, hMax, stileDeep], geometry: "box" });
+    detail({ id: `${id}:fr`, label: "Perfil", kind: "frame", material: "metal", position: [w - stile, 0, 0], size: [stile, hMax, stileDeep], geometry: "box" });
+    detail({ id: `${id}:fb`, label: "Perfil", kind: "frame", material: "metal", position: [stile, 0, 0], size: [w - 2 * stile, bar, deep], geometry: "box" });
+    detail({ id: `${id}:ft`, label: "Perfil", kind: "frame", material: "metal", position: [stile, hMax - bar, 0], size: [w - 2 * stile, bar, deep], geometry: "box" });
+    detail({ id: `${id}:glass`, label: "Vidrio", kind: "glass", material: "glass", position: [stile, bar, 8], size: [w - 2 * stile, hMax - 2 * bar, 4], geometry: "box" });
+    ctx.hw.glass.qty += ((w - 2 * stile) * (hMax - 2 * bar)) / 1e6;
+    ctx.hw.frameProfile.qty += (2 * (w + hMax)) / 1000;
+    faceZ = deep;
+  }
+
+  if (handleAt && config.handle !== "none") {
+    const drawer = handleAt === "drawer";
+    const len = drawer ? Math.min(220, w * 0.4) : Math.min(320, hMin * 0.3);
+    const cx = drawer ? w / 2 : handleAt === "right" ? w - 45 : 45;
+    const cy = drawer ? hMax * 0.62 : Math.min(hMin / 2, 1050);
+    if (flush) {
+      detail({ id: `${id}:h`, label: "Tirador", kind: "handle", material: "handle", position: [cx - 5, cy - len / 2, faceZ], size: [10, len, 6], geometry: "box" });
+    } else if (config.handle === "knob") {
+      detail({ id: `${id}:h`, label: "Tirador", kind: "handle", material: "handle", position: [cx - 14, cy - 14, faceZ + 4], size: [28, 28, 26], geometry: "knob" });
+    } else {
+      const size: Vec3 = drawer ? [len, 12, 12] : [12, len, 12];
+      detail({ id: `${id}:h`, label: "Tirador", kind: "handle", material: "handle", position: [cx - size[0] / 2, cy - size[1] / 2, faceZ + 16], size, geometry: "box" });
+      // dos patitas que separan la barra del frente
+      for (const k of [0, 1]) {
+        const off = (k === 0 ? -1 : 1) * (len / 2 - 14);
+        detail({
+          id: `${id}:hs${k}`,
+          label: "Tirador",
+          kind: "handle",
+          material: "handle",
+          position: drawer ? [cx + off - 4, cy - 4, faceZ] : [cx - 4, cy + off - 4, faceZ],
+          size: [8, 8, 16],
+          geometry: "box",
+        });
+      }
+    }
+    ctx.hw.handle.qty += 1;
+  }
+  return out;
+}
+
+/**
+ * Pasa a mecanizados lo que ya está en el 3D: las patas del tirador son sus
+ * agujeros, las ranuras son ranuras, y las puertas batientes llevan cazoletas.
+ */
+function attachFrontFeatures(p: Part) {
+  if (!p.cut) return;
+  const features: Feature[] = [];
+  // las cazoletas son de las batientes del placard; las rebatibles van con compás
+  if (p.kind === "door" && (p.hinge === "left" || p.hinge === "right")) {
+    const edgeHeight = p.trapezoid ? (p.hinge === "left" ? p.trapezoid.left : p.trapezoid.right) : p.size[1];
+    const count = hingesFor(p.size[1]);
+    const at = Array.from({ length: count }, (_, i) => Math.round(100 + ((edgeHeight - 200) * i) / (count - 1)));
+    features.push({ type: "hinge-holes", edge: p.hinge, at });
+  }
+  const d = p.details ?? [];
+  const holes: [number, number][] = [];
+  for (const x of d) {
+    if (x.kind !== "handle") continue;
+    if (x.geometry === "knob") holes.push([Math.round(x.position[0] + 14), Math.round(x.position[1] + 14)]);
+    else if (/:hs\d$/.test(x.id)) holes.push([Math.round(x.position[0] + 4), Math.round(x.position[1] + 4)]);
+  }
+  if (holes.length) features.push({ type: "handle-holes", points: holes });
+  const grooves = d.filter((x) => x.kind === "groove");
+  if (grooves.length) {
+    features.push({
+      type: "grooves",
+      xs: grooves.map((g) => Math.round(g.position[0] + g.size[0] / 2)),
+      from: Math.round(grooves[0].position[1]),
+      lengths: grooves.map((g) => Math.round(g.size[1])),
+    });
+  }
+  if (d.some((x) => x.kind === "mirror")) features.push({ type: "mirror" });
+  if (features.length) p.cut.features = [...(p.cut.features ?? []), ...features];
+}
+
+function buildRun(ctx: Ctx, r: number): RunAssembly {
+  const { config } = ctx;
+  const t = catalog.board.thickness;
+  const back = catalog.backBoard.thickness;
+  const D = config.depth;
+  const H = config.height;
+  const Z = config.plinth ? PLINTH_HEIGHT : 0;
+  const hinged = config.doors === "hinged";
+  const sliding = config.doors === "sliding";
+  const run = config.runs[r];
+  const span = runSpan(config, r, run.width);
+  const mods = run.modules;
+  const n = mods.length;
+  const xs = moduleOffsets(mods);
+  const sloped = r === 0 && config.slope.enabled;
+  const hAt = (x: number) => (r === 0 ? heightAt(config, x) : H);
+
+  // la puerta batiente va por delante del cuerpo: el cuerpo pierde su espesor
+  const bodyD = hinged ? D - t - 2 : D;
+  const carcassD = bodyD - back;
+  const shelfD = carcassD - (hinged ? HINGED_SETBACK : 0) - (sliding ? SLIDING_RESERVE : 0);
+  const corner = r === 0 ? cornerModule(config.shape, n) : null;
+  // la parte del frente que queda detrás del tramo lateral: ahí no van puertas
+  const blind = corner === null ? null : config.shape === "l-left" ? { from: 0, to: D } : { from: span - D, to: span };
+  // el módulo del tramo lateral que toca la esquina
+  const cornerEnd = r === 1 ? (config.shape === "l-left" ? n - 1 : 0) : null;
+  /**
+   * En L, la esquina es un solo espacio: el módulo del lateral que la toca se
+   * une con el del frente. En vez de lateral lleva un parante adelante, y su
+   * techo, su piso, sus estantes y su barral siguen hasta encontrarse con los
+   * del frente. Así no queda un rincón muerto detrás de un panel ciego.
+   */
+  const joinAt: "left" | "right" | null = cornerEnd === null ? null : config.shape === "l-left" ? "right" : "left";
+  const stretch = (m: number, x: number, len: number, extra: number): [number, number] =>
+    m !== cornerEnd || !joinAt ? [x, len] : joinAt === "right" ? [x, len + extra] : [x - extra, len + extra];
+  // del lado de la esquina, el lateral del frente llega hasta adelante: lo que
+  // entra desde el lateral arranca después de su espesor
+  const cornerSideId = corner === null ? null : config.shape === "l-left" ? "L" : "R";
+  // las corredizas se calculan antes que los cajones: cada cajón tiene que
+  // salir por un hueco que las hojas puedan dejar
+  const slideGeo = (() => {
+    if (!sliding) return null;
+    const from = t + (blind?.from === 0 ? D - t : 0);
+    const to = span - t - (blind && blind.from !== 0 ? D - t : 0);
+    return { from, to, leaves: slidingLeafSpans(from, to, xs.slice(1).map((x) => x - t / 2)) };
+  })();
+
+  /**
+   * Bisagra de una puerta sola. En la esquina abre hacia afuera, para no
+   * chocar con el otro tramo; en los demás, evita compartir divisor con la
+   * bisagra del módulo vecino.
+   */
+  const lastRightHinge = { main: false, top: false };
+  const singleHinge = (m: number, prevRight: boolean): "left" | "right" => {
+    if (blind && m === corner) return blind.from === 0 ? "right" : "left";
+    if (m === cornerEnd) return config.shape === "l-left" ? "left" : "right";
+    return prevRight ? "right" : "left";
+  };
+
+  const parts: Part[] = [];
+  const add = (p: Omit<Part, "run">) => {
+    const full: Part = { ...p, run: r };
+    parts.push(full);
+    return full;
+  };
+  const P = (s: string) => `r${r}:${s}`;
+  const feature = (id: string, f: Feature) => {
+    const p = parts.find((x) => x.id === id);
+    if (p?.cut) (p.cut.features ??= []).push(f);
+  };
+  const verticalId = (i: number) => P(i === 0 ? "sideL" : i === n ? "sideR" : `div${i}`);
+
+  // laterales y divisores, pasantes de piso a techo
+  const verticalX = [0, ...xs.slice(1).map((x) => x - t), span - t];
+  const isCornerPost = (i: number) => (joinAt === "right" && i === n) || (joinAt === "left" && i === 0);
+  verticalX.forEach((x, i) => {
+    const outer = i === 0 || i === n;
+    const h = sloped ? hAt(x + t / 2) : H;
+    const id = i === 0 ? "sideL" : i === n ? "sideR" : `div${i}`;
+    const post = isCornerPost(i);
+    const depth = post ? CORNER_POST : carcassD;
+    add({
+      id: P(id),
+      label: post ? "Parante de esquina" : outer ? "Lateral" : "Divisor",
+      kind: outer ? "side" : "divider",
+      material: config.bodyMaterial,
+      module: null,
+      position: [x, 0, post ? bodyD - CORNER_POST : back],
+      size: [t, h, depth],
+      geometry: "box",
+      cut: { length: h, width: depth, thickness: t, band: { long: post ? 2 : 1, short: 0 } },
+      explode: [i === 0 ? -220 : i === n ? 220 : ((x + t / 2) / span - 0.5) * 260, 0, 0],
+    });
+  });
+
+  mods.forEach((mod, m) => {
+    const x0 = xs[m];
+    const w = mod.width;
+    const M = (s: string) => P(`m${m}:${s}`);
+    const hL = hAt(x0);
+    const hR = hAt(x0 + w);
+
+    if (sloped) {
+      const angle = Math.atan2(hR - hL, w);
+      const len = w / Math.cos(angle);
+      const cy = (hL + hR) / 2 - t / 2;
+      add({
+        id: M("top"),
+        label: "Techo",
+        kind: "top",
+        material: config.bodyMaterial,
+        module: m,
+        position: [x0 + w / 2 - len / 2, cy - t / 2, back],
+        size: [len, t, carcassD],
+        rotationZ: angle,
+        geometry: "box",
+        cut: {
+          length: len,
+          width: carcassD,
+          thickness: t,
+          band: { long: 1, short: 0 },
+          note: `corte a ${deg(angle)}° en las puntas`,
+          features: [{ type: "bevel", degrees: deg(angle) }],
+        },
+        explode: [0, 220, 0],
+      });
+      ctx.counts.angledCuts += 1;
+    } else {
+      const [tx, tw] = stretch(m, x0, w, t + D - bodyD);
+      add({
+        id: M("top"),
+        label: "Techo",
+        kind: "top",
+        material: config.bodyMaterial,
+        module: m,
+        position: [tx, H - t, back],
+        size: [tw, t, carcassD],
+        geometry: "box",
+        cut: { length: tw, width: carcassD, thickness: t, band: { long: 1, short: 0 } },
+        explode: [0, 220, 0],
+      });
+    }
+    const [fx, fw] = stretch(m, x0, w, t + D - bodyD);
+    add({
+      id: M("bottom"),
+      label: "Piso",
+      kind: "bottom",
+      material: config.bodyMaterial,
+      module: m,
+      position: [fx, Z, back],
+      size: [fw, t, carcassD],
+      geometry: "box",
+      cut: { length: fw, width: carcassD, thickness: t, band: { long: 1, short: 0 } },
+      explode: [0, 0, 0],
+    });
+    if (Z > 0) {
+      add({
+        id: M("plinth"),
+        label: "Zócalo",
+        kind: "plinth",
+        material: config.bodyMaterial,
+        module: m,
+        position: [x0, 0, bodyD - 20 - t],
+        size: [w, Z, t],
+        geometry: "box",
+        cut: { length: w, width: Z, thickness: t, band: { long: 0, short: 0 } },
+        explode: [0, 0, 180],
+      });
+    }
+
+    // el fondo se parte por módulo, de eje a eje de divisor, para que entre en placa
+    const bx0 = m === 0 ? 0 : x0 - t / 2;
+    const bx1 = m === n - 1 ? span : x0 + w + t / 2;
+    const backL = hAt(bx0) - Z;
+    const backR = hAt(bx1) - Z;
+    add({
+      id: M("back"),
+      label: "Fondo",
+      kind: "back",
+      material: "back",
+      module: m,
+      position: [bx0, Z, 0],
+      size: [bx1 - bx0, Math.max(backL, backR), back],
+      geometry: sloped ? "trapezoid" : "box",
+      trapezoid: sloped ? { left: backL, right: backR } : undefined,
+      cut: {
+        length: Math.max(backL, backR),
+        width: bx1 - bx0,
+        thickness: back,
+        band: { long: 0, short: 0 },
+        note: sloped ? `trapecio, lado bajo ${Math.round(Math.min(backL, backR))} mm` : undefined,
+      },
+      explode: [0, 0, -280],
+    });
+
+    const innerBottom = Z + t;
+    const innerTop = sloped ? Math.min(hL, hR) - t - 20 : H - t;
+    /** superficies horizontales del módulo: dónde apoya la luz y dónde cuelga la tira */
+    const levels: { id: string; y: number }[] = [];
+
+    const joined = m === cornerEnd && joinAt !== null;
+    const shelf = (key: string, y: number, fixed = false) => {
+      // en la esquina el estante sigue hasta tocar el del frente, y arranca
+      // después del lateral del frente para no pisarlo
+      const [sx, sw] = stretch(m, x0 + 1, w - 2, t + 1 + D - back - shelfD);
+      const sz = joined ? t : back;
+      const sd = joined ? shelfD - (t - back) : shelfD;
+      add({
+        id: M(key),
+        label: joined ? "Estante de esquina" : fixed ? "Estante fijo" : "Estante",
+        kind: fixed ? "fixed-shelf" : "shelf",
+        material: config.bodyMaterial,
+        module: m,
+        position: [sx, y, sz],
+        size: [sw, t, sd],
+        geometry: "box",
+        cut: { length: sw, width: sd, thickness: t, band: { long: 1, short: 0 } },
+        explode: [0, 0, 170],
+      });
+      levels.push({ id: M(key), y });
+    };
+
+    const rod = (key: string, shelfY: number) => {
+      // en la esquina el barral llega hasta el del frente: queda un barral en L
+      const [rx, len] = stretch(m, x0 + 1, w - 2, t + 1 + D - back - shelfD / 2);
+      add({
+        id: M(key),
+        label: joined ? "Barral de esquina" : "Barral",
+        kind: "rod",
+        material: "metal",
+        module: m,
+        position: [rx, shelfY - 60, back + shelfD / 2 - 15],
+        size: [len, 15, 30],
+        geometry: "box",
+        cut: null,
+        explode: [0, 0, 130],
+      });
+      ctx.hw.rod.qty += len / 1000;
+      ctx.hw.rodSupport.qty += 2;
+    };
+
+    const drawers = (count: number) => {
+      // la caja de cajón pierde 12,5 mm por lado para la corredera
+      const slide = Math.max(250, Math.floor((shelfD - t - 10) / 50) * 50);
+      const boxH = DRAWER_PITCH - 50;
+      // detrás de puertas batientes el frente deja 12 mm por lado: ahí queda
+      // la puerta abierta, y el cajón tiene que salir sin tocarla. Detrás de
+      // corredizas se hace del ancho del hueco más grande que las hojas pueden
+      // dejar delante del módulo, y la caja va sobre suplementos
+      const inset = hinged ? 12 : sliding ? 40 : 2;
+      let fa = x0 + inset;
+      let fb = x0 + w - inset;
+      // con dos hojas, el módulo del medio nunca queda libre entero: el cajón no sale
+      let unreachable = false;
+      if (slideGeo) {
+        let best: [number, number] | null = null;
+        for (const [a, b] of slidingOpenings(slideGeo.leaves, slideGeo.from, slideGeo.to)) {
+          const lo = Math.max(x0 + 12, a + SLIDING_DRAWER_CLEAR);
+          const hi = Math.min(x0 + w - 12, b - SLIDING_DRAWER_CLEAR);
+          if (hi - lo > (best ? best[1] - best[0] : 0)) best = [lo, hi];
+        }
+        if (best && best[1] - best[0] >= MIN_DRAWER_FRONT) [fa, fb] = best.map(Math.round) as [number, number];
+        else unreachable = true;
+      }
+      const frontW = fb - fa;
+      // la corredera necesita 13 mm por lado; si la caja queda más adentro, va sobre suplementos
+      const boxX = Math.max(fa + 1, x0 + 13);
+      const boxW = Math.min(fb - 1, x0 + w - 13) - boxX;
+      const spacer = boxX > x0 + 13.5 || boxX + boxW < x0 + w - 13.5;
+      for (let j = 0; j < count; j++) {
+        const y = innerBottom + j * DRAWER_PITCH + 2;
+        const open: Vec3 = [0, 0, slide * 0.55];
+        const D_ = (s: string) => M(`d${j}:${s}`);
+        const front = add({
+          id: D_("front"),
+          label: "Frente de cajón",
+          kind: "drawer-front",
+          material: config.doors === "none" ? config.doorMaterial : config.bodyMaterial,
+          module: m,
+          position: [fa, y, back + shelfD - t],
+          size: [frontW, DRAWER_PITCH - 4, t],
+          geometry: "box",
+          cut: { length: frontW, width: DRAWER_PITCH - 4, thickness: t, band: { long: 2, short: 2 } },
+          openShift: open,
+          drawerBlocked: unreachable || undefined,
+          explode: [0, 0, 320],
+          front: config.doors === "none",
+        });
+        if (config.doors === "none") {
+          front.details = frontDetails(ctx, D_("front"), w - 4, { left: DRAWER_PITCH - 4, right: DRAWER_PITCH - 4 }, "drawer");
+        }
+        for (const side of [0, 1]) {
+          add({
+            id: D_(side === 0 ? "sideL" : "sideR"),
+            label: "Lateral de cajón",
+            kind: "drawer-side",
+            material: config.bodyMaterial,
+            module: m,
+            position: [side === 0 ? boxX : boxX + boxW - t, y + 20, back + shelfD - t - slide],
+            size: [t, boxH, slide],
+            geometry: "box",
+            cut: { length: slide, width: boxH, thickness: t, band: { long: 1, short: 0 } },
+            openShift: open,
+            explode: [0, 0, 240],
+          });
+        }
+        for (const end of [0, 1]) {
+          add({
+            id: D_(end === 0 ? "endB" : "endF"),
+            label: "Contrafrente de cajón",
+            kind: "drawer-end",
+            material: config.bodyMaterial,
+            module: m,
+            position: [boxX + t, y + 20, end === 0 ? back + shelfD - t - slide : back + shelfD - 2 * t],
+            size: [boxW - 2 * t, boxH, t],
+            geometry: "box",
+            cut: { length: boxW - 2 * t, width: boxH, thickness: t, band: { long: 1, short: 0 } },
+            openShift: open,
+            explode: [0, 0, 240],
+          });
+        }
+        add({
+          id: D_("floor"),
+          label: "Fondo de cajón",
+          kind: "drawer-bottom",
+          material: "back",
+          module: m,
+          position: [boxX, y + 17, back + shelfD - t - slide],
+          size: [boxW, back, slide],
+          geometry: "box",
+          cut: { length: slide, width: boxW, thickness: back, band: { long: 0, short: 0 } },
+          openShift: open,
+          explode: [0, 0, 240],
+        });
+        ctx.hw.slidePair.qty += 1;
+        if (spacer) ctx.hw.slideSpacer.qty += 1;
+      }
+      ctx.counts.drawers += count;
+      return innerBottom + drawerZone(count);
+    };
+
+    /** bandeja extraíble: un estante sobre correderas con un frente bajo. Sale como un cajón */
+    const tray = (key: string, y: number) => {
+      const slide = Math.max(250, Math.floor((shelfD - t - 10) / 50) * 50);
+      const inset = hinged ? 14 : sliding ? 40 : 13;
+      let fa = x0 + inset;
+      let fb = x0 + w - inset;
+      let unreachable = false;
+      if (slideGeo) {
+        let best: [number, number] | null = null;
+        for (const [a, b] of slidingOpenings(slideGeo.leaves, slideGeo.from, slideGeo.to)) {
+          const lo = Math.max(x0 + 13, a + SLIDING_DRAWER_CLEAR);
+          const hi = Math.min(x0 + w - 13, b - SLIDING_DRAWER_CLEAR);
+          if (hi - lo > (best ? best[1] - best[0] : 0)) best = [lo, hi];
+        }
+        if (best && best[1] - best[0] >= MIN_DRAWER_FRONT) [fa, fb] = best.map(Math.round) as [number, number];
+        else unreachable = true;
+      }
+      const tw = fb - fa;
+      const open: Vec3 = [0, 0, slide * 0.55];
+      const lip = 60;
+      add({
+        id: M(`${key}:front`),
+        label: "Frente de bandeja",
+        kind: "drawer-front",
+        material: config.bodyMaterial,
+        module: m,
+        position: [fa, y, back + shelfD - t],
+        size: [tw, lip, t],
+        geometry: "box",
+        cut: { length: tw, width: lip, thickness: t, band: { long: 2, short: 2 } },
+        openShift: open,
+        drawerBlocked: unreachable || undefined,
+        explode: [0, 0, 320],
+      });
+      add({
+        id: M(`${key}:base`),
+        label: "Bandeja extraíble",
+        kind: "drawer-end",
+        material: config.bodyMaterial,
+        module: m,
+        position: [fa, y, back + shelfD - t - slide],
+        size: [tw, t, slide],
+        geometry: "box",
+        cut: { length: tw, width: slide, thickness: t, band: { long: 0, short: 2 } },
+        openShift: open,
+        explode: [0, 0, 240],
+      });
+      ctx.hw.slidePair.qty += 1;
+      if (sliding) ctx.hw.slideSpacer.qty += 1;
+      ctx.counts.trays += 1;
+    };
+    /** los estantes libres del módulo: los `mod.trays` de más abajo salen como bandejas */
+    const freeShelf = (k: number, y: number) => (k <= (mod.trays ?? 0) ? tray(`t${k}`, y) : shelf(`s${k}`, y));
+
+    const maletero = innerTop - TOP_SHELF_DROP;
+
+    switch (mod.layout) {
+      case "shelves": {
+        const gap = (innerTop - innerBottom - mod.shelves * t) / (mod.shelves + 1);
+        for (let k = 1; k <= mod.shelves; k++) freeShelf(k, innerBottom + k * gap + (k - 1) * t);
+        break;
+      }
+      case "hanging": {
+        shelf("mal", maletero);
+        rod("rod0", maletero);
+        break;
+      }
+      case "double-hanging": {
+        shelf("mal", maletero);
+        rod("rod0", maletero);
+        const middle = innerBottom + (maletero - innerBottom) / 2;
+        shelf("mid", middle);
+        rod("rod1", middle);
+        break;
+      }
+      case "drawers-shelves": {
+        const top = drawers(mod.drawers);
+        shelf("fs", top, true);
+        const from = top + t;
+        const gap = (innerTop - from - mod.shelves * t) / (mod.shelves + 1);
+        for (let k = 1; k <= mod.shelves; k++) freeShelf(k, from + k * gap + (k - 1) * t);
+        break;
+      }
+      case "drawers-hanging": {
+        const top = drawers(mod.drawers);
+        shelf("fs", top, true);
+        shelf("mal", maletero);
+        rod("rod0", maletero);
+        break;
+      }
+    }
+
+    // luz: un perfil con difusor bajo cada estante (y bajo el techo) y perfiles
+    // verticales en los laterales. Cada uno lleva su luz: la caja del hueco que
+    // alumbra, con el fondo, el piso, los laterales y la boca (`lib/led.ts`)
+    let lit = false;
+    // la boca del módulo, donde va la cortina de luz: detrás de las puertas (las corredizas corren delante de los estantes)
+    const mouth = sliding ? shelfD + 4 : carcassD - 4;
+    if (mod.ledShelves) {
+      const tops = [...levels].sort((a, b) => a.y - b.y);
+      // el estante fijo de los cajones no lleva tira: alumbraría los frentes por dentro
+      const hangers = [
+        ...tops.filter((l) => !l.id.endsWith(":fs")).map((l) => ({ id: l.id, under: l.y })),
+        ...(sloped ? [] : [{ id: M("top"), under: H - t }]),
+      ];
+      hangers.forEach((lv) => {
+        const below = tops.filter((l) => l.y + t <= lv.under - 1).pop();
+        const floorY = below ? below.y + t : innerBottom;
+        const gap = lv.under - floorY;
+        if (gap < 120) return;
+        const len = w - 30;
+        const top = lv.id === M("top");
+        // con corredizas, la tira de arriba también va detrás de las hojas: adelante chocaba con ellas
+        const z = top && !sliding ? back + carcassD - 50 : back + shelfD - 30;
+        add({
+          id: `${lv.id}:led`,
+          label: "Tira LED",
+          kind: "led",
+          material: "led",
+          module: m,
+          position: [x0 + 15, lv.under - LED_PROFILE[0], z],
+          size: [len, LED_PROFILE[0], LED_PROFILE[1]],
+          geometry: "box",
+          cut: null,
+          explode: top ? [0, 220, 0] : [0, 0, 170],
+        });
+        // el piso del hueco es el estante de abajo (o el piso del módulo, que llega hasta adelante)
+        // (con corredizas la luz termina donde empiezan las hojas: si no, el plano alumbrado
+        // del estante las atravesaba y se veía como una raya clara en la puerta)
+        const depth = below || sliding ? shelfD : carcassD;
+        add(
+          washPart(
+            `${lv.id}:luz`,
+            [x0, floorY, back],
+            [w, gap, depth],
+            { from: [15, gap - LED_PROFILE[0], z - back + LED_PROFILE[1] / 2], axis: 0, length: len, emit: [1, -1], faces: ["z0", "y0", "y1", "x0", "x1", "air"], carrier: "y1", airAt: mouth },
+            { module: m },
+          ),
+        );
+        // el perfil va embutido: el estante lleva un canal por debajo
+        feature(lv.id, { type: "led-groove", face: "bottom", offset: top ? 43 : 23 });
+        ctx.ledMeters += len / 1000;
+        lit = true;
+      });
+    }
+    if (mod.ledSides) {
+      const h = innerTop - innerBottom;
+      for (const side of ["L", "R"] as const) {
+        // el lateral del frente en la esquina queda tapado por los estantes del lateral
+        if (m === corner && side === cornerSideId) continue;
+        const left = side === "L";
+        // cerca de la boca; con corredizas, detrás del lugar por donde corren las hojas
+        const inset = sliding ? SLIDING_RESERVE + 40 : 70;
+        const z = back + carcassD - inset;
+        add({
+          id: M(`led${side}`),
+          label: "Perfil LED",
+          kind: "led",
+          material: "led",
+          module: m,
+          position: [left ? x0 : x0 + w - LED_PROFILE[0], innerBottom, z],
+          size: [LED_PROFILE[0], h, LED_PROFILE[1]],
+          geometry: "box",
+          cut: null,
+          explode: [left ? -40 : 40, 0, 0],
+        });
+        // alumbra hacia el centro del módulo: el fondo, el lateral de enfrente, el piso y lo que cuelga
+        add(
+          washPart(
+            M(`luz${side}`),
+            [x0, innerBottom, back],
+            [w, h, carcassD],
+            { from: [left ? LED_PROFILE[0] : w - LED_PROFILE[0], 0, z - back + LED_PROFILE[1] / 2], axis: 1, length: h, emit: [0, left ? 1 : -1], faces: ["z0", "y0", "x0", "x1", "air"], carrier: left ? "x0" : "x1", airAt: mouth },
+            { module: m },
+          ),
+        );
+        // el perfil vertical va en la cara del lateral que da a este módulo
+        feature(verticalId(left ? m : m + 1), { type: "led-groove", face: left ? "right" : "left", offset: inset - 7 });
+        ctx.ledMeters += h / 1000;
+      }
+      lit = true;
+    }
+    if (lit) ctx.litModules += 1;
+
+    if (hinged) {
+      // la puerta tapa el módulo de eje a eje de divisor; los extremos, hasta afuera
+      let dx0 = bx0;
+      let dx1 = bx1;
+      if (blind && m === corner) {
+        if (blind.from === 0) dx0 = blind.to + 2;
+        else dx1 = blind.from - 2;
+      }
+      const span_ = dx1 - dx0;
+      const leaves = span_ > 650 ? 2 : 1;
+      const doorW = span_ / leaves - DOOR_GAP;
+      const single = singleHinge(m, lastRightHinge.main);
+      for (let k = 0; k < leaves; k++) {
+        const left = dx0 + k * (span_ / leaves) + DOOR_GAP / 2;
+        const hl = hAt(left) - Z - DOOR_GAP;
+        const hr = hAt(left + doorW) - Z - DOOR_GAP;
+        const hinge: "left" | "right" = leaves === 2 ? (k === 0 ? "left" : "right") : single;
+        if (k === leaves - 1) lastRightHinge.main = hinge === "right";
+        const id = M(`door${k}`);
+        const doorH = Math.max(hl, hr);
+        add({
+          id,
+          label: "Puerta",
+          kind: "door",
+          material: config.doorStyle === "glass" ? "none" : config.doorMaterial,
+          module: m,
+          position: [left, Z + DOOR_GAP / 2, bodyD + 2],
+          size: [doorW, doorH, t],
+          geometry: sloped ? "trapezoid" : config.doorStyle === "glass" ? "none" : "box",
+          trapezoid: sloped ? { left: hl, right: hr } : undefined,
+          cut:
+            config.doorStyle === "glass"
+              ? null
+              : {
+                  length: doorH,
+                  width: doorW,
+                  thickness: t,
+                  band: { long: 2, short: 2 },
+                  note: sloped ? `trapecio, lado bajo ${Math.round(Math.min(hl, hr))} mm` : undefined,
+                },
+          hinge,
+          details: frontDetails(ctx, id, doorW, { left: hl, right: hr }, hinge === "left" ? "right" : "left"),
+          explode: [0, 0, 400],
+          front: true,
+        });
+        ctx.hw.hinge.qty += hingesFor(doorH);
+        ctx.counts.doors += 1;
+        if (sloped) ctx.counts.angledCuts += 1;
+      }
+    }
+  });
+
+  if (slideGeo) {
+    const { from, to, leaves } = slideGeo;
+    const leafH = H - Z - 2 * t - 30;
+    leaves.forEach((leaf, k) => {
+      // cada hoja puede tener su estilo y su color (una espejada entre dos lisas)
+      const look = r === 0 ? leafLook(config, k) : { style: config.doorStyle, material: config.doorMaterial };
+      const leafCtx: Ctx = { ...ctx, config: { ...config, doorStyle: look.style, doorMaterial: look.material } };
+      const glass = look.style === "glass";
+      const frontTrack = leaf.track === 0;
+      const z = frontTrack ? bodyD - 25 - t : bodyD - 55 - t;
+      const id = P(`slide${k}`);
+      add({
+        id,
+        label: "Hoja corrediza",
+        kind: "sliding-door",
+        material: glass ? "none" : look.material,
+        module: null,
+        position: [leaf.left, Z + t + 15, z],
+        size: [leaf.width, leafH, t],
+        geometry: glass ? "none" : "box",
+        cut: glass ? null : { length: leafH, width: leaf.width, thickness: t, band: { long: 2, short: 2 } },
+        // en las de vidrio, los perfiles verticales de aluminio son el tirador
+        details: frontDetails(leafCtx, id, leaf.width, { left: leafH, right: leafH }, glass ? null : frontTrack ? "right" : "left", !frontTrack, true),
+        slide: { track: leaf.track, index: k, home: leaf.left, width: leaf.width, from, to },
+        explode: [0, 0, frontTrack ? 460 : 400],
+        front: true,
+      });
+      ctx.counts.doors += 1;
+    });
+    ctx.hw.slidingKit.qty += leaves.length;
+    ctx.hw.slidingTrack.qty += (2 * (to - from)) / 1000;
+  }
+
+  // altillo: un cuerpo arriba, con las mismas divisiones y sus propias puertas
+  if (config.topBox.enabled) {
+    const ht = config.topBox.height;
+    const altBodyD = config.doors === "none" ? bodyD : D - t - 2;
+    const altCarcass = altBodyD - back;
+    const lift: Vec3 = [0, 380, 0];
+    verticalX.forEach((x, i) => {
+      const id = i === 0 ? "sideL" : i === n ? "sideR" : `div${i}`;
+      const post = isCornerPost(i);
+      const depth = post ? CORNER_POST : altCarcass;
+      add({
+        id: P(`alt:${id}`),
+        label: post ? "Parante de esquina de altillo" : i === 0 || i === n ? "Lateral de altillo" : "Divisor de altillo",
+        kind: i === 0 || i === n ? "side" : "divider",
+        material: config.bodyMaterial,
+        module: null,
+        position: [x, H, post ? altBodyD - CORNER_POST : back],
+        size: [t, ht, depth],
+        geometry: "box",
+        cut: { length: ht, width: depth, thickness: t, band: { long: post ? 2 : 1, short: 0 } },
+        explode: [i === 0 ? -220 : i === n ? 220 : 0, lift[1], 0],
+      });
+    });
+    mods.forEach((mod, m) => {
+      const x0 = xs[m];
+      const w = mod.width;
+      const A = (s: string) => P(`alt:m${m}:${s}`);
+      const [ax, aw] = stretch(m, x0, w, t + D - altBodyD);
+      for (const [key, y, label] of [
+        ["bottom", H, "Piso de altillo"],
+        ["top", H + ht - t, "Techo de altillo"],
+      ] as const) {
+        add({
+          id: A(key),
+          label,
+          kind: key === "top" ? "top" : "bottom",
+          material: config.bodyMaterial,
+          module: m,
+          position: [ax, y, back],
+          size: [aw, t, altCarcass],
+          geometry: "box",
+          cut: { length: aw, width: altCarcass, thickness: t, band: { long: 1, short: 0 } },
+          explode: [0, lift[1] + (key === "top" ? 140 : 0), 0],
+        });
+      }
+      const bx0 = m === 0 ? 0 : x0 - t / 2;
+      const bx1 = m === n - 1 ? span : x0 + w + t / 2;
+      add({
+        id: A("back"),
+        label: "Fondo de altillo",
+        kind: "back",
+        material: "back",
+        module: m,
+        position: [bx0, H, 0],
+        size: [bx1 - bx0, ht, back],
+        geometry: "box",
+        cut: { length: bx1 - bx0, width: ht, thickness: back, band: { long: 0, short: 0 } },
+        explode: [0, lift[1], -280],
+      });
+      if (config.doors !== "none") {
+        let dx0 = bx0;
+        let dx1 = bx1;
+        if (blind && m === corner) {
+          if (blind.from === 0) dx0 = blind.to + 2;
+          else dx1 = blind.from - 2;
+        }
+        const span_ = dx1 - dx0;
+        const leaves = span_ > 650 ? 2 : 1;
+        const doorW = span_ / leaves - DOOR_GAP;
+        const doorH = ht - DOOR_GAP;
+        const single = singleHinge(m, lastRightHinge.top);
+        for (let k = 0; k < leaves; k++) {
+          const hinge: "left" | "right" = leaves === 2 ? (k === 0 ? "left" : "right") : single;
+          if (k === leaves - 1) lastRightHinge.top = hinge === "right";
+          const id = A(`door${k}`);
+          add({
+            id,
+            label: "Puerta de altillo",
+            kind: "door",
+            material: config.doorStyle === "glass" ? "none" : config.doorMaterial,
+            module: m,
+            position: [dx0 + k * (span_ / leaves) + DOOR_GAP / 2, H + DOOR_GAP / 2, altBodyD + 2],
+            size: [doorW, doorH, t],
+            geometry: config.doorStyle === "glass" ? "none" : "box",
+            cut: config.doorStyle === "glass" ? null : { length: doorH, width: doorW, thickness: t, band: { long: 2, short: 2 } },
+            hinge,
+            details: frontDetails(ctx, id, doorW, { left: doorH, right: doorH }, hinge === "left" ? "right" : "left"),
+            explode: [0, lift[1], 400],
+            front: true,
+          });
+          ctx.hw.hinge.qty += hingesFor(doorH);
+          ctx.counts.doors += 1;
+        }
+      }
+      ctx.hw.fittings.qty += 1;
+    });
+  }
+
+  // terminales curvos en los extremos libres
+  const ends = curvedEnds(config, r);
+  for (const side of ["left", "right"] as const) {
+    if (!ends[side]) continue;
+    const x = side === "left" ? -CURVE_RADIUS : span;
+    const hEnd = sloped ? hAt(side === "left" ? 0 : span) : H;
+    const bottomY = Z;
+    const topY = hEnd - t;
+    const count = Math.max(2, Math.round((topY - bottomY) / 380) - 1);
+    const ys = [bottomY, ...Array.from({ length: count }, (_, k) => bottomY + ((k + 1) * (topY - bottomY)) / (count + 1)), topY];
+    ys.forEach((y, k) => {
+      add({
+        id: P(`curve${side === "left" ? "L" : "R"}:${k === 0 ? "bottom" : k === ys.length - 1 ? "top" : `s${k}`}`),
+        label: "Estante curvo",
+        kind: "curved-shelf",
+        material: config.bodyMaterial,
+        module: null,
+        position: [x, y, 0],
+        size: [CURVE_RADIUS, t, bodyD],
+        geometry: "quarter",
+        quarter: side,
+        cut: {
+          length: bodyD,
+          width: CURVE_RADIUS,
+          thickness: t,
+          band: { long: 0, short: 0 },
+          curvedBand: quarterEllipse(CURVE_RADIUS, bodyD),
+          note: `corte curvo, ${CURVE_RADIUS / 10} × ${Math.round(bodyD / 10)} cm`,
+        },
+        explode: [side === "left" ? -280 : 280, 0, 0],
+      });
+      ctx.counts.curvedCuts += 1;
+    });
+  }
+
+  for (const p of parts) attachFrontFeatures(p);
+
+  ctx.hw.fittings.qty += n;
+  ctx.counts.modules += n;
+
+  const transform = runTransform(config, r);
+  return { index: r, ...transform, span, parts };
+}
+
+const FULL_OPEN = Math.PI / 2;
+/** la puerta que cede en un par con bisagras en el mismo divisor */
+const SHY_OPEN = (72 * Math.PI) / 180;
+
+/** contorno en planta (x, z de mundo) de una puerta batiente abierta a `angle` */
+function doorFootprint(run: RunAssembly, d: Part, angle: number): [number, number][] {
+  const left = d.hinge === "left";
+  const w = d.size[0];
+  const t = d.size[2];
+  // pivote en el canto de adelante, del lado de la bisagra; 30 mm de margen por el tirador
+  const px = left ? d.position[0] : d.position[0] + w;
+  const pz = d.position[2] + t;
+  const local: [number, number][] = left
+    ? [[0, -t], [w, -t], [w, 30], [0, 30]]
+    : [[-w, -t], [0, -t], [0, 30], [-w, 30]];
+  const th = left ? -angle : angle;
+  const c = Math.cos(th);
+  const s = Math.sin(th);
+  return local.map(([x, z]) => {
+    const p = toWorld(run, [px + x * c + z * s, 0, pz - x * s + z * c]);
+    return [p[0], p[2]];
+  });
+}
+
+/** separación de ejes: dos polígonos convexos en planta, ¿se tocan? */
+function polygonsTouch(a: [number, number][], b: [number, number][]): boolean {
+  for (const poly of [a, b]) {
+    for (let i = 0; i < poly.length; i++) {
+      const [x1, y1] = poly[i];
+      const [x2, y2] = poly[(i + 1) % poly.length];
+      const nx = y2 - y1;
+      const ny = x1 - x2;
+      const project = (p: [number, number][]) => p.map(([x, y]) => x * nx + y * ny);
+      const pa = project(a);
+      const pb = project(b);
+      if (Math.max(...pa) < Math.min(...pb) || Math.max(...pb) < Math.min(...pa)) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Cómo abre cada puerta batiente para que nada se atraviese:
+ * - las puertas abren en cascada, de a poco;
+ * - si dos puertas tienen la bisagra en el mismo divisor, una abre a 90° y la
+ *   otra a 72°: así los tiradores no se chocan. Abre del todo la que tiene
+ *   cajones detrás;
+ * - una puerta que no llega a 90° le queda delante a sus cajones: esos cajones
+ *   no salen;
+ * - en la L, la puerta de la esquina del lateral espera a la del frente y abre
+ *   hasta donde no la toca.
+ */
+function planDoorMotion(runs: RunAssembly[], config: WardrobeConfig) {
+  const block = (run: RunAssembly, module: number | null) => {
+    for (const p of run.parts) if (p.module === module && p.kind.startsWith("drawer")) p.drawerBlocked = true;
+  };
+  for (const run of runs) {
+    const doors = run.parts.filter((p) => p.kind === "door" && p.hinge);
+    const drawers = new Set(run.parts.filter((p) => p.kind === "drawer-front").map((p) => p.module));
+    doors.forEach((d, i) => {
+      d.openAngle = FULL_OPEN;
+      d.openDelay = Math.min(0.24, i * 0.035);
+    });
+    for (const a of doors) {
+      if (a.hinge !== "right") continue;
+      const ax = a.position[0] + a.size[0];
+      const b = doors.find((d) => d.hinge === "left" && Math.abs(d.position[0] - ax) < 12 && Math.abs(d.position[1] - a.position[1]) < 50);
+      if (!b) continue;
+      const main = a.position[1] < config.height;
+      const aHas = main && drawers.has(a.module);
+      const bHas = main && drawers.has(b.module);
+      const shy = bHas && !aHas ? a : b;
+      shy.openAngle = SHY_OPEN;
+      if (main && drawers.has(shy.module)) block(run, shy.module);
+    }
+  }
+
+  if (config.shape === "straight" || runs.length < 2) return;
+  const [front, side] = runs;
+  const cornerModule = config.shape === "l-left" ? 0 : front.parts.filter((p) => p.kind === "bottom" && !p.id.includes("alt:")).length - 1;
+  const sideModules = side.parts.filter((p) => p.kind === "bottom" && !p.id.includes("alt:")).length;
+  const cornerEnd = config.shape === "l-left" ? sideModules - 1 : 0;
+  for (const row of ["main", "top"] as const) {
+    const inRow = (p: Part) => (row === "main" ? p.position[1] < config.height : p.position[1] >= config.height);
+    const fixed = front.parts.filter((p) => p.kind === "door" && p.module === cornerModule && inRow(p));
+    const moving = side.parts.filter((p) => p.kind === "door" && p.module === cornerEnd && inRow(p));
+    for (const d of moving) {
+      let max = d.openAngle ?? FULL_OPEN;
+      for (let deg = 1; deg <= 90; deg++) {
+        const angle = (deg * Math.PI) / 180;
+        if (angle > max) break;
+        const mine = doorFootprint(side, d, angle);
+        if (fixed.some((f) => polygonsTouch(mine, doorFootprint(front, f, f.openAngle ?? FULL_OPEN)))) {
+          max = ((deg - 1) * Math.PI) / 180;
+          break;
+        }
+      }
+      d.openAngle = max;
+      // espera a que la del frente termine de abrir
+      d.openDelay = 0.5;
+      if (row === "main" && max < FULL_OPEN - 0.02) block(side, d.module);
+    }
+  }
+}
+
+/** qué extremos de un tramo llevan terminal curvo, según la forma */
+export function curvedEnds(config: WardrobeConfig, r: number): { left: boolean; right: boolean } {
+  const { left, right } = config.curved;
+  if (config.shape === "straight") return { left, right };
+  // en L, la izquierda y la derecha se miran desde el frente del conjunto
+  if (config.shape === "l-left") return r === 0 ? { left: false, right } : { left, right: false };
+  return r === 0 ? { left, right: false } : { left: false, right };
+}
+
+/** dónde queda y cómo gira cada tramo en el mundo */
+export function runTransform(config: WardrobeConfig, r: number): { rotationY: number; offset: Vec3 } {
+  if (r === 0) return { rotationY: 0, offset: [0, 0, 0] };
+  if (config.shape === "l-left") return { rotationY: Math.PI / 2, offset: [0, 0, config.runs[1].width] };
+  return { rotationY: -Math.PI / 2, offset: [config.runs[0].width, 0, config.depth] };
+}
+
+/** lleva un punto del tramo al mundo */
+export function toWorld(run: Pick<RunAssembly, "rotationY" | "offset">, p: Vec3): Vec3 {
+  const c = Math.cos(run.rotationY);
+  const s = Math.sin(run.rotationY);
+  return [p[0] * c + p[2] * s + run.offset[0], p[1] + run.offset[1], -p[0] * s + p[2] * c + run.offset[2]];
+}
+
+export function buildAssembly(config: WardrobeConfig): Assembly {
+  const line = (key: HardwareKey, label: string, unit: HardwareLine["unit"]): HardwareLine => ({ key, label, qty: 0, unit });
+  const ctx: Ctx = {
+    config,
+    hw: {
+      hinge: line("hinge", "Bisagra cazoleta 35 mm", "u"),
+      slidePair: line("slidePair", "Corredera telescópica (par)", "u"),
+      slideSpacer: line("slideSpacer", "Suplemento de corredera (par)", "u"),
+      rod: line("rod", "Barral oval de aluminio", "m"),
+      rodSupport: line("rodSupport", "Soporte de barral", "u"),
+      slidingKit: line("slidingKit", "Kit de ruedas por hoja corrediza", "u"),
+      slidingTrack: line("slidingTrack", "Perfil de aluminio para corrediza", "m"),
+      handle: line("handle", "Tirador", "u"),
+      fittings: line("fittings", "Tornillería y uniones por módulo", "u"),
+      mirror: line("mirror", "Espejo 4 mm", "m²"),
+      glass: line("glass", "Vidrio fumé 4 mm", "m²"),
+      frameProfile: line("frameProfile", "Perfil de aluminio para puerta", "m"),
+      grooving: line("grooving", "Ranurado CNC por puerta", "u"),
+      ledStrip: line("ledStrip", config.led.color === "rgb" ? "Tira LED RGB" : "Tira LED blanca", "m"),
+      ledProfile: line("ledProfile", "Perfil de aluminio con difusor", "m"),
+      powerSupply: line("powerSupply", "Fuente 12 V 60 W", "u"),
+      sensor: line("sensor", "Sensor de apertura", "u"),
+      rgbController: line("rgbController", "Controlador RGB con control remoto", "u"),
+    },
+    counts: { modules: 0, doors: 0, drawers: 0, trays: 0, angledCuts: 0, curvedCuts: 0 },
+    ledMeters: 0,
+    litModules: 0,
+  };
+
+  const runs = config.runs.map((_, r) => buildRun(ctx, r));
+  planDoorMotion(runs, config);
+
+  if (ctx.ledMeters > 0) {
+    ctx.hw.ledStrip.qty = ctx.ledMeters;
+    ctx.hw.ledProfile.qty = ctx.ledMeters;
+    // fuentes con 20 % de margen sobre el consumo
+    ctx.hw.powerSupply.qty = Math.ceil((ctx.ledMeters * catalog.led.wattsPerMeter * 1.2) / 60);
+    if (config.led.sensor && config.doors !== "none") ctx.hw.sensor.qty = ctx.litModules;
+    if (config.led.color === "rgb") ctx.hw.rgbController.qty = 1;
+  }
+
+  // caja de mundo: todas las esquinas de todas las piezas, ya giradas
+  const min: Vec3 = [Infinity, Infinity, Infinity];
+  const max: Vec3 = [-Infinity, -Infinity, -Infinity];
+  for (const run of runs) {
+    for (const p of run.parts) {
+      if (p.kind === "glow") continue;
+      for (const dx of [0, 1])
+        for (const dy of [0, 1])
+          for (const dz of [0, 1]) {
+            const w = toWorld(run, [p.position[0] + dx * p.size[0], p.position[1] + dy * p.size[1], p.position[2] + dz * p.size[2]]);
+            for (let k = 0; k < 3; k++) {
+              min[k] = Math.min(min[k], w[k]);
+              max[k] = Math.max(max[k], w[k]);
+            }
+          }
+    }
+  }
+
+  return {
+    runs,
+    hardware: Object.values(ctx.hw).filter((h) => h.qty > 0),
+    counts: ctx.counts,
+    ledMeters: ctx.ledMeters,
+    bounds: { min, max },
+  };
+}
+
+/** todas las piezas de todos los tramos, con sus terminaciones */
+export function allParts(assembly: Assembly): Part[] {
+  return assembly.runs.flatMap((r) => r.parts.flatMap((p) => [p, ...(p.details ?? []).map((d) => ({ ...d, run: p.run }))]));
+}
