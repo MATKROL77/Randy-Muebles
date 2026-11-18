@@ -106,6 +106,10 @@ export type StoreMode = {
   onChange?: (config: WardrobeConfig, price: number) => void;
   /** valida en el servidor y agrega al carrito; devuelve el texto para mostrar */
   onAddToCart: (config: WardrobeConfig, snapshot: string | null) => Promise<{ ok: boolean; message: string }>;
+  /** el precio de la tienda (lista de precios), en vez del costeo por despiece */
+  price?: (config: WardrobeConfig) => number;
+  /** el precio renglón por renglón, para mostrarlo */
+  lines?: (config: WardrobeConfig) => { name: string; detail: string; qty: number; unit: number; total: number }[];
   /** deja la configuración dentro de lo que el modelo de la tienda permite */
   fit?: (config: WardrobeConfig) => WardrobeConfig;
   /** rango de ancho del modelo, en mm */
@@ -366,7 +370,9 @@ export default function Configurator({ workshop = null, initial, onInquiry, stor
 
   if (store?.addRef) store.addRef.current = () => void addToCart();
   const wLim = store?.width ?? LIMITS.width;
-  const price = useAnimatedNumber(result.price);
+  const storePrice = useMemo(() => (store?.price ? store.price(config) : null), [config, store]);
+  const priceLines = useMemo(() => (store?.lines ? store.lines(config) : null), [config, store]);
+  const price = useAnimatedNumber(storePrice ?? result.price);
   const message = orderMessage(config, money(result.price), shareLink(config), {
     rows: result.rows,
     workshopLink: shareLink(config, "/demo/taller/"),
@@ -1054,6 +1060,27 @@ export default function Configurator({ workshop = null, initial, onInquiry, stor
                 )}
               </Section>
             </>
+          )}
+
+          {priceLines && (
+            <section className="rounded-2xl border border-line p-4" data-rm="price-lines">
+              <h2 className="eyebrow">Detalle del precio</h2>
+              <ul className="mt-3 space-y-2.5 text-sm">
+                {priceLines.map((l) => (
+                  <li key={l.name} className="flex items-baseline justify-between gap-3">
+                    <span className="min-w-0">
+                      <span className="font-medium">{l.qty > 1 ? `${l.qty} × ` : ""}{l.name}</span>
+                      {l.detail && <span className="block text-xs text-ink-2">{l.detail}{l.qty > 1 ? ` · ${money(l.unit)} c/u` : ""}</span>}
+                    </span>
+                    <span className="shrink-0 tabular-nums">{money(l.total)}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-3 flex items-baseline justify-between border-t border-line pt-3 text-sm font-semibold">
+                <span>Total de demostración</span>
+                <span className="tabular-nums">{money(storePrice ?? 0)}</span>
+              </p>
+            </section>
           )}
 
           {!store && (

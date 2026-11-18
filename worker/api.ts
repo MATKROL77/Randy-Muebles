@@ -1,4 +1,4 @@
-import { DISCLAIMER, EXTRA_UNIT, MODELS, RULES, basePrice, configProperties, demoQuote, enforce, modelById } from "../src/lib/randy.ts";
+import { DISCLAIMER, PRICES, RULES, configProperties, demoQuote, enforce, placardVariants, type ItemKey, type PriceLine } from "../src/lib/randy.ts";
 
 /** lo mínimo de un KV: así las pruebas usan un Map */
 export type Store = {
@@ -12,21 +12,22 @@ export type Env = {
   ENVIRONMENT?: string;
   /** orígenes de tienda que pueden usar la API, separados por coma */
   ALLOWED_ORIGINS?: string;
-  /** producto "Adicionales de personalización" de la tienda */
-  TN_EXTRAS_PRODUCT_ID?: string;
-  /** JSON: { "<id de producto en la tienda>": "<id de modelo>" } */
-  TN_PRODUCT_MODELS?: string;
+  /**
+   * Los productos de la tienda, en JSON:
+   * { "placard": "<id del producto Placard a medida>", "items": { "cajon": "<id>", ... } }
+   */
+  TN_PRODUCTS?: string;
 };
+
+export type StoreProducts = { placard: string | null; items: Partial<Record<ItemKey, string>> };
 
 export type SavedConfig = {
   id: string;
-  model: string;
-  modelName: string;
   config: unknown;
   properties: { name: string; value: string }[];
+  /** el precio validado, renglón por renglón */
+  lines: PriceLine[];
   price: number;
-  base: number;
-  extraUnits: number;
   productId: string | null;
   origin: string | null;
   createdAt: string;
@@ -57,12 +58,12 @@ function cors(request: Request, env: Env): Record<string, string> {
 const json = (body: unknown, status: number, headers: Record<string, string>) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...headers } });
 
-function productModels(env: Env): Record<string, string> {
+export function storeProducts(env: Env): StoreProducts {
   try {
-    const v = JSON.parse(env.TN_PRODUCT_MODELS ?? "{}");
-    return v && typeof v === "object" ? (v as Record<string, string>) : {};
+    const v = JSON.parse(env.TN_PRODUCTS ?? "{}") as Partial<StoreProducts> | null;
+    return { placard: v?.placard ? String(v.placard) : null, items: v?.items && typeof v.items === "object" ? v.items : {} };
   } catch {
-    return {};
+    return { placard: null, items: {} };
   }
 }
 
@@ -86,47 +87,31 @@ export async function handle(request: Request, env: Env): Promise<Response> {
   try {
     if (path === "/api/health" && request.method === "GET") return json({ ok: true, environment: env.ENVIRONMENT ?? "dev" }, 200, h);
 
-    // el catálogo de la demo: modelos, rangos y precio "desde". Es lo que hay que cargar en la tienda
+    // el catálogo de la demo: reglas, lista de precios y las variantes de tamaño. Es lo que hay que cargar en la tienda
     if (path === "/api/tn/catalog" && request.method === "GET") {
-      return json(
-        {
-          demo: true,
-          disclaimer: DISCLAIMER,
-          extraUnit: EXTRA_UNIT,
-          extrasProductId: env.TN_EXTRAS_PRODUCT_ID ?? null,
-          products: productModels(env),
-          rules: RULES,
-          models: MODELS.map((m) => ({ id: m.id, name: m.name, leaves: m.leaves, width: m.width, basePrice: basePrice(m) })),
-        },
-        200,
-        h,
-      );
+      return json({ demo: true, disclaimer: DISCLAIMER, rules: RULES, prices: PRICES, products: storeProducts(env), variants: placardVariants() }, 200, h);
     }
 
     // valida y cotiza sin guardar
     if (path === "/api/tn/quote" && request.method === "POST") {
       const body = await readBody(request);
-      const model = modelById(String(body?.model ?? ""));
-      if (!body || !model) return json({ error: "modelo_desconocido" }, 400, h);
-      const config = enforce(model, body.config as never);
-      return json({ model: model.id, config, ...demoQuote(model, config), properties: configProperties(config) }, 200, h);
+      if (!body) return json({ error: "pedido_invalido" }, 400, h);
+      const config = enforce(body.config as never);
+      return json({ config, ...demoQuote(config), properties: configProperties(config) }, 200, h);
     }
 
     // valida, cotiza y guarda: devuelve el identificador que viaja con el carrito
     if (path === "/api/tn/configs" && request.method === "POST") {
       const body = await readBody(request);
-      const model = modelById(String(body?.model ?? ""));
-      if (!body || !model) return json({ error: "modelo_desconocido" }, 400, h);
+      if (!body) return json({ error: "pedido_invalido" }, 400, h);
+      const products = storeProducts(env);
       const productId = typeof body.productId === "string" || typeof body.productId === "number" ? String(body.productId).slice(0, 24) : null;
-      // si el producto de la tienda está vinculado a un modelo, tiene que ser este
-      const linked = productId ? productModels(env)[productId] : undefined;
-      if (linked && linked !== model.id) return json({ error: "producto_de_otro_modelo" }, 400, h);
-      const config = enforce(model, body.config as never);
-      const q = demoQuote(model, config);
+      // el configurador solo vende el producto de la tienda que tiene vinculado
+      if (productId && products.placard && productId !== products.placard) return json({ error: "producto_no_vinculado" }, 400, h);
+      const config = enforce(body.config as never);
+      const q = demoQuote(config);
       const saved: SavedConfig = {
         id: newId(),
-        model: model.id,
-        modelName: model.name,
         config,
         properties: configProperties(config),
         ...q,
@@ -138,7 +123,7 @@ export async function handle(request: Request, env: Env): Promise<Response> {
       await env.CONFIGS.put(`cfg:${saved.id}`, JSON.stringify(saved), { expirationTtl: TTL });
       const snapshot = typeof body.snapshot === "string" && body.snapshot.startsWith("data:image/jpeg;base64,") && body.snapshot.length <= MAX_SNAPSHOT ? body.snapshot : null;
       if (snapshot) await env.CONFIGS.put(`img:${saved.id}`, snapshot, { expirationTtl: TTL });
-      return json({ ...saved, extrasProductId: env.TN_EXTRAS_PRODUCT_ID ?? null, extraUnit: EXTRA_UNIT, disclaimer: DISCLAIMER, hasSnapshot: !!snapshot }, 201, h);
+      return json({ ...saved, products, disclaimer: DISCLAIMER, hasSnapshot: !!snapshot }, 201, h);
     }
 
     // recuperar una configuración guardada: para el carrito, el pedido o el taller

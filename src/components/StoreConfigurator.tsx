@@ -4,11 +4,11 @@ import { useEffect, useRef, useState } from "react";
 
 import Configurator, { type StoreMode } from "@/components/Configurator";
 import type { WardrobeConfig } from "@/lib/model";
-import { BRAND, DISCLAIMER, MODELS, RULES, withModules, basePrice, demoQuote, enforce, initialConfig, modelById, setupCatalog, type RandyModel } from "@/lib/randy";
+import { BRAND, DISCLAIMER, RULES, demoQuote, enforce, initialConfig, setupCatalog, withModules, type PriceLine } from "@/lib/randy";
 import { decodeConfig, encodeConfig } from "@/lib/share";
 
 /** lo que el servidor devuelve al guardar una configuración */
-type Saved = { id: string; price: number; base: number; extraUnits: number; properties: { name: string; value: string }[]; modelName: string; extrasProductId: string | null; hasSnapshot: boolean };
+type Saved = { id: string; price: number; lines: PriceLine[]; properties: { name: string; value: string }[]; hasSnapshot: boolean };
 
 const SOURCE = "rm-configurator";
 const embedded = () => typeof window !== "undefined" && window.parent !== window;
@@ -21,14 +21,14 @@ function tell(type: string, data: Record<string, unknown> = {}) {
 /**
  * El configurador dentro de la ficha de un producto de Tiendanube.
  *
- *   /tn/?m=<modelo>&p=<id de producto>&c=<configuración guardada en la sesión>
+ *   /tn/?p=<id de producto>&c=<configuración guardada en la sesión>
  *   /tn/?id=RM-XXXXXXXX   abre una configuración guardada (carrito, pedido, taller)
  *
  * No toca el carrito: valida y guarda en el servidor, y le pasa el resultado a
  * la página de la tienda, que es la que agrega al carrito con sus mecanismos.
  */
 export default function StoreConfigurator() {
-  const [state, setState] = useState<{ model: RandyModel; initial: WardrobeConfig; productId: string | null; savedId: string | null } | "cargando" | "no_disponible">("cargando");
+  const [state, setState] = useState<{ initial: WardrobeConfig; productId: string | null; savedId: string | null } | "cargando" | "no_disponible">("cargando");
   const addRef = useRef<(() => void) | null>(null);
   const pending = useRef<((r: { ok: boolean; message: string }) => void) | null>(null);
 
@@ -37,17 +37,14 @@ export default function StoreConfigurator() {
     const q = new URLSearchParams(window.location.search);
     const productId = q.get("p");
     const id = q.get("id");
-    const open = (model: RandyModel | undefined, config: Partial<WardrobeConfig> | null, savedId: string | null) => {
-      if (!model) return setState("no_disponible");
-      setState({ model, initial: config ? enforce(model, config) : initialConfig(model), productId, savedId });
-    };
     if (id) {
       fetch(`/api/tn/configs/${encodeURIComponent(id)}`)
         .then((r) => (r.ok ? r.json() : Promise.reject()))
-        .then((saved: { model: string; config: Partial<WardrobeConfig>; id: string }) => open(modelById(saved.model), saved.config, saved.id))
+        .then((saved: { config: Partial<WardrobeConfig>; id: string }) => setState({ initial: enforce(saved.config), productId, savedId: saved.id }))
         .catch(() => setState("no_disponible"));
     } else {
-      open(modelById(q.get("m")) ?? (q.get("m") ? undefined : MODELS[0]), decodeConfig(q.get("c")), null);
+      const fromUrl = decodeConfig(q.get("c"));
+      setState({ initial: fromUrl ? enforce(fromUrl) : initialConfig(), productId, savedId: null });
     }
 
     const onMessage = (e: MessageEvent) => {
@@ -75,23 +72,24 @@ export default function StoreConfigurator() {
     );
   }
 
-  const { model, productId, savedId } = state;
+  const { productId, savedId } = state;
   const store: StoreMode = {
     disclaimer: DISCLAIMER,
-    fit: (c) => enforce(model, c),
+    fit: (c) => enforce(c),
+    price: (c) => demoQuote(c).price,
+    lines: (c) => demoQuote(c).lines,
     width: RULES.width,
-    modules: { ...RULES.modules, set: (c, n) => withModules(model, c, n) },
+    modules: { ...RULES.modules, set: (c, n) => withModules(c, n) },
     addRef,
     onChange: (config) => {
-      const q = demoQuote(model, config);
-      tell("change", { c: encodeConfig(config), price: q.price, base: q.base, model: model.id });
+      tell("change", { c: encodeConfig(config), price: demoQuote(config).price });
     },
     onAddToCart: async (config, snapshot) => {
       tell("adding");
       const res = await fetch("/api/tn/configs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: model.id, config, productId, snapshot: snapshot && snapshot.length < 200_000 ? snapshot : null }),
+        body: JSON.stringify({ config, productId, snapshot: snapshot && snapshot.length < 200_000 ? snapshot : null }),
       });
       if (!res.ok) {
         tell("add-failed");
@@ -122,7 +120,6 @@ export default function StoreConfigurator() {
         </div>
       )}
       <Configurator workshop={{ name: BRAND.name, whatsapp: "" }} initial={state.initial} store={store} />
-      <span hidden data-rm="base-price">{basePrice(model)}</span>
     </>
   );
 }

@@ -12,7 +12,7 @@
  *     configuración.
  *
  * Vincular un producto: en su descripción (modo HTML) va
- *   <div data-rm-configurator="placard-2p"></div>
+ *   <div data-rm-configurator="placard"></div>
  *   <script src="https://<servidor>/tn/embed.js" async></script>
  */
 (function () {
@@ -78,7 +78,7 @@
       ".rm-card{background:#fff;color:#1f1d1a;width:100%;max-width:520px;max-height:92vh;overflow:auto;border-radius:20px 20px 0 0;padding:22px 20px 18px;box-shadow:0 30px 80px -20px rgba(0,0,0,.5);font-size:14px;line-height:1.5}",
       "@media (min-width:640px){.rm-card{border-radius:20px}}",
       ".rm-card h3{margin:0 0 4px;font-size:19px;line-height:1.25}.rm-card .rm-total{display:flex;justify-content:space-between;gap:12px;padding:10px 0 0;margin-top:10px;border-top:1px solid rgba(0,0,0,.1);font-weight:600}",
-      ".rm-card .rm-rows{font-size:13px;margin-top:8px}.rm-card .rm-rows div{display:flex;justify-content:space-between;gap:12px}",
+      ".rm-card .rm-rows{font-size:13.5px;margin-top:14px}.rm-card .rm-rows div{display:flex;justify-content:space-between;gap:14px;padding:7px 0;border-top:1px solid rgba(0,0,0,.07)}.rm-card .rm-rows div:first-child{border-top:0}.rm-card .rm-rows small{display:block;opacity:.6;font-size:12px}.rm-card .rm-rows span:last-child{white-space:nowrap;font-variant-numeric:tabular-nums}",
       ".rm-btns{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap}.rm-btns a,.rm-btns button{flex:1 1 150px;text-align:center;border-radius:999px;padding:12px 16px;font-size:14px;font-weight:600;cursor:pointer;border:1px solid #1f1d1a;text-decoration:none}",
       ".rm-btns .rm-primary{background:#1f1d1a;color:#fff}.rm-btns .rm-ghost{background:transparent;color:#1f1d1a}",
     ].join("\n");
@@ -97,14 +97,14 @@
       var box = document.createElement("div");
       box.className = "rm-cfg";
       box.setAttribute("data-rm-config", line.id);
-      if (line.role === "extras") {
-        box.innerHTML = "Adicionales de la configuración <b class='rm-id'>" + esc(line.id) + "</b>: completan el precio del placard configurado. La cantidad la calcula el servidor, no se edita.";
-        // la cantidad es parte del precio validado: no se toca desde el carrito
+      if (line.role === "item") {
+        box.innerHTML = "Parte del placard <b class='rm-id'>" + esc(line.id) + "</b>" + (line.detail ? " · " + esc(line.detail) : "") + ".";
+        // la cantidad sale del diseño: se cambia desde el configurador, no desde el carrito
         el.classList.add("rm-extras");
       } else {
         box.innerHTML =
           (line.snapshotUrl ? "<img alt='' loading='lazy' src='" + esc(line.snapshotUrl) + "'>" : "") +
-          "<b>Configuración</b> <span class='rm-id'>" + esc(line.id) + "</span>" +
+          "<b>Tu diseño</b> <span class='rm-id'>" + esc(line.id) + "</span>" +
           "<dl>" +
           line.properties
             .map(function (p) {
@@ -112,7 +112,8 @@
             })
             .join("") +
           "</dl>" +
-          "<small>Precio de demostración: " + money(line.price) + " · <a target='_blank' rel='noopener' href='" + esc(line.viewUrl) + "'>ver en 3D</a></small>";
+          "<small>Total de demostración con sus agregados: " + money(line.price) + " · <a target='_blank' rel='noopener' href='" + esc(line.viewUrl) + "'>ver en 3D</a></small>";
+        el.classList.add("rm-extras");
       }
       var host = el.querySelector(".cart-item-info-container") || el;
       host.appendChild(box);
@@ -140,30 +141,49 @@
     });
   }
 
+  /**
+   * Un renglón del carrito por cada renglón del precio: el placard en la
+   * variante de su tamaño y cada agregado como su propio producto, todos con el
+   * identificador del diseño. Van de a uno: el carrito de la tienda no admite
+   * altas en paralelo.
+   */
   function addToCart(productId, msg) {
     var saved = msg.saved;
-    var props = [["properties[Configuración]", saved.id]].concat(
-      saved.properties.map(function (p) {
-        return ["properties[" + p.name + "]", p.value];
-      }),
-    );
-    props.push(["properties[Precio DEMO]", money(saved.price)]);
     var lines = store.get(LINES_KEY) || {};
-    return post([["add_to_cart", String(productId)], ["quantity", "1"]].concat(props))
-      .then(function (j) {
-        lines[j.item.id] = { id: saved.id, role: "main", properties: saved.properties, price: saved.price, snapshotUrl: msg.snapshotUrl, viewUrl: msg.viewUrl, at: Date.now() };
-        store.set(LINES_KEY, lines);
-        if (!saved.extraUnits || !saved.extrasProductId) return j;
-        return post([["add_to_cart", String(saved.extrasProductId)], ["quantity", String(saved.extraUnits)], ["properties[Configuración]", saved.id]]).then(function (k) {
-          lines[k.item.id] = { id: saved.id, role: "extras", at: Date.now() };
+    var tag = ["properties[Diseño]", saved.id];
+    var last = null;
+    var chain = Promise.resolve();
+    saved.lines.forEach(function (line) {
+      chain = chain.then(function () {
+        var fields;
+        if (line.kind === "placard") {
+          fields = [["add_to_cart", String(productId)], ["quantity", "1"]];
+          line.variant.forEach(function (v, i) {
+            fields.push(["variation[" + i + "]", v]);
+          });
+          fields.push(tag);
+          saved.properties.forEach(function (p) {
+            fields.push(["properties[" + p.name + "]", p.value]);
+          });
+        } else {
+          var id = saved.products && saved.products.items && saved.products.items[line.key];
+          if (!id) throw new Error("producto sin vincular: " + line.key);
+          fields = [["add_to_cart", String(id)], ["quantity", String(line.qty)], tag];
+        }
+        return post(fields).then(function (j) {
+          last = j;
+          lines[j.item.id] =
+            line.kind === "placard"
+              ? { id: saved.id, role: "main", properties: saved.properties, price: saved.price, snapshotUrl: msg.snapshotUrl, viewUrl: msg.viewUrl, at: Date.now() }
+              : { id: saved.id, role: "item", detail: line.detail, at: Date.now() };
           store.set(LINES_KEY, lines);
-          return k;
         });
-      })
-      .then(function (last) {
-        refreshCart(last);
-        return last;
       });
+    });
+    return chain.then(function () {
+      refreshCart(last);
+      return last;
+    });
   }
 
   /** deja al día lo que el tema muestra del carrito, hasta donde se puede sin tocar el tema */
@@ -195,7 +215,6 @@
   function done(saved, productName) {
     var old = document.querySelector(".rm-done");
     if (old) old.remove();
-    var extras = saved.extraUnits * saved.extraUnit;
     var wrap = document.createElement("div");
     wrap.className = "rm-done";
     wrap.setAttribute("role", "dialog");
@@ -203,20 +222,21 @@
     wrap.innerHTML =
       "<div class='rm-card'>" +
       "<h3>Agregado al carrito</h3>" +
-      "<div>" + esc(productName) + " · configuración <b class='rm-id'>" + esc(saved.id) + "</b></div>" +
-      "<div class='rm-cfg'><dl>" +
-      saved.properties
-        .map(function (p) {
-          return "<dt>" + esc(p.name) + "</dt><dd>" + esc(p.value) + "</dd>";
+      "<div>" + esc(productName) + " · diseño <b class='rm-id'>" + esc(saved.id) + "</b></div>" +
+      "<div class='rm-rows'>" +
+      saved.lines
+        .map(function (l) {
+          return (
+            "<div><span>" + (l.qty > 1 ? l.qty + " × " : "") + esc(l.name) +
+            (l.detail ? "<small>" + esc(l.detail) + (l.qty > 1 ? " · " + money(l.unit) + " c/u" : "") + "</small>" : "") +
+            "</span><span>" + money(l.total) + "</span></div>"
+          );
         })
         .join("") +
-      "</dl></div>" +
-      "<div class='rm-rows'><div><span>Placard (precio base)</span><span>" + money(saved.base) + "</span></div>" +
-      (extras ? "<div><span>Adicionales de personalización</span><span>" + money(extras) + "</span></div>" : "") +
       "</div>" +
       "<div class='rm-total'><span>Total de demostración</span><span>" + money(saved.price) + "</span></div>" +
       "<p class='rm-note' style='margin:10px 0 0'>" + esc(DISCLAIMER) + "</p>" +
-      "<div class='rm-btns'><button type='button' class='rm-ghost' data-rm-close>Seguir configurando</button><a class='rm-primary' href='/comprar/'>Ver carrito</a></div>" +
+      "<div class='rm-btns'><button type='button' class='rm-ghost' data-rm-close>Seguir diseñando</button><a class='rm-primary' href='/comprar/'>Ver carrito</a></div>" +
       "</div>";
     wrap.addEventListener("click", function (e) {
       if (e.target === wrap || (e.target && e.target.hasAttribute && e.target.hasAttribute("data-rm-close"))) wrap.remove();
@@ -227,14 +247,13 @@
   /* ---------- 1. el configurador en la ficha del producto ---------- */
 
   function mount(anchor) {
-    var model = anchor.getAttribute("data-rm-configurator");
     var product = (window.LS && LS.product) || {};
     var productId = product.id || anchor.getAttribute("data-rm-product") || "";
-    if (!model || !productId) return;
+    if (!productId) return;
     css();
 
     var draft = store.get(DRAFT_KEY + productId);
-    var src = BASE + "/tn/?m=" + encodeURIComponent(model) + "&p=" + encodeURIComponent(productId) + (draft && draft.c ? "&c=" + encodeURIComponent(draft.c) : "");
+    var src = BASE + "/tn/?p=" + encodeURIComponent(productId) + (draft && draft.c ? "&c=" + encodeURIComponent(draft.c) : "");
 
     var wrap = document.createElement("div");
     wrap.className = "rm-wrap";
@@ -265,7 +284,7 @@
     if (priceEl && !document.querySelector(".rm-price-label")) {
       var label = document.createElement("span");
       label.className = "rm-price-label";
-      label.textContent = "Precio de demostración";
+      label.textContent = "Tu diseño · precio de demostración";
       priceEl.parentNode.insertBefore(label, priceEl);
     }
 
@@ -278,6 +297,11 @@
     if (form) {
       var qty = form.querySelector(".js-quantity, .form-quantity");
       if (qty) (qty.closest(".form-group") || qty).classList.add("rm-hide");
+      // el tamaño lo elige el configurador: los selectores de variante de la tienda no hacen falta
+      var selects = form.querySelectorAll(".js-variation-option");
+      for (var v = 0; v < selects.length; v++) (selects[v].closest(".form-group") || selects[v].parentNode).classList.add("rm-hide");
+      var groups = form.querySelectorAll(".js-product-variants, .product-variants");
+      for (var g = 0; g < groups.length; g++) groups[g].classList.add("rm-hide");
       form.addEventListener(
         "submit",
         function (e) {
@@ -326,8 +350,8 @@
         addToCart(productId, d)
           .then(function () {
             busy(false);
-            say("added", { ok: true, message: "Listo: agregamos tu placard al carrito (configuración " + d.saved.id + ")." });
-            done(d.saved, product.name || d.saved.modelName);
+            say("added", { ok: true, message: "Listo: agregamos tu placard al carrito (diseño " + d.saved.id + ")." });
+            done(d.saved, product.name || "Placard a medida");
           })
           .catch(function () {
             busy(false);

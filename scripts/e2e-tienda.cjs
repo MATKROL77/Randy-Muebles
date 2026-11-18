@@ -11,7 +11,7 @@
 const { chromium, devices } = require("playwright");
 
 const mode = process.argv[2] === "mobile" ? "mobile" : "desktop";
-const url = process.argv[3] || "https://medida3.mitiendanube.com/productos/placard-corredizo-2-puertas-demo-18mxv/";
+const url = process.argv[3] || "https://medida3.mitiendanube.com/productos/placard-corredizo-a-medida-demo-1rp23/";
 const shots = process.env.SHOTS || ".";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36";
 
@@ -111,6 +111,7 @@ const assert = (c, m) => {
     const cards = await frame.locator("button.option-card span.tabular-nums").allInnerTexts();
     const widths = cards.map((t) => Number(t.replace(/[^\d]/g, ""))).filter(Boolean);
     assert(widths.length === 3, `módulos: ${widths.length}`);
+    assert((await frame.locator('[data-rm="price-lines"]').innerText()).includes("Módulo adicional"), "el detalle del precio no muestra el módulo adicional");
     assert(widths.every((w) => w >= 60), `anchos de módulo: ${widths.join(", ")} cm`);
     return `3 módulos de ${widths.join(", ")} cm`;
   });
@@ -153,31 +154,38 @@ const assert = (c, m) => {
       if (r.method() === "POST" && /\/comprar\/?$/.test(new URL(r.url()).pathname)) posts.push(decodeURIComponent((r.postData() || "").replace(/\+/g, " ")));
     });
     const answer = page.waitForResponse((r) => r.url().includes("/api/tn/configs") && r.request().method() === "POST", { timeout: 240_000 });
-    await frame.locator('[data-rm="add-to-cart"]').click({ force: true });
+    await frame.locator('[data-rm="add-to-cart"]').evaluate((el) => el.click());
     saved = await (await answer).json();
     saved.viewUrl = `${new URL((await answer).url()).origin}/tn/?id=${saved.id}`;
     await page.locator(".rm-done").waitFor({ timeout: 120_000 });
     await page.screenshot({ path: `${shots}/tienda-${mode}-3-agregado.png`, timeout: 240_000 });
     assert(/^RM-/.test(saved.id), "el servidor no devolvió identificador");
-    assert(posts.length === (saved.extraUnits ? 2 : 1), `se esperaban ${saved.extraUnits ? 2 : 1} altas al carrito y hubo ${posts.length}`);
-    assert(posts[0].includes(`properties[Configuración]=${saved.id}`), "el ítem no lleva el identificador");
+    assert(posts.length === saved.lines.length, `se esperaban ${saved.lines.length} altas al carrito y hubo ${posts.length}`);
+    for (const post of posts) assert(post.includes(`properties[Diseño]=${saved.id}`), "un renglón no lleva el identificador del diseño");
+    const main = saved.lines[0];
+    main.variant.forEach((v, i) => assert(posts[0].includes(`variation[${i}]=${v}`), `el placard no fue en su tamaño (${v})`));
     for (const p of saved.properties) assert(posts[0].includes(`properties[${p.name}]=${p.value}`), `falta la propiedad ${p.name}`);
-    return `${saved.id} · $${saved.price} = ${saved.base} + ${saved.extraUnits}×1000`;
+    return `${saved.id} · $${saved.price} en ${saved.lines.length} renglones`;
   });
 
-  await check("11. el carrito tiene el placard y sus adicionales, y el total coincide", async () => {
-    assert(saved, "no hay configuración guardada");
+  await check("11. el carrito tiene cada renglón con su cantidad y su precio, y el total coincide", async () => {
+    assert(saved, "no hay diseño guardado");
     const text = await page.locator(".rm-done").innerText();
-    for (const p of saved.properties) assert(text.includes(p.value), `el resumen no muestra ${p.name}`);
+    for (const l of saved.lines) assert(text.includes(l.name), `el resumen no muestra ${l.name}`);
     await page.goto(new URL("/comprar/", url).href, { waitUntil: "load" });
     await page.waitForTimeout(2500);
-    const cart = await page.evaluate(() => ({ items: LS.cart.items.map((i) => ({ product: i.product_id, qty: i.quantity, unit: i.unit_price / 100 })), subtotal: LS.cart.subtotal / 100 }));
-    const total = cart.items.reduce((a, i) => a + i.qty * i.unit, 0);
-    assert(cart.items.length === (saved.extraUnits ? 2 : 1), `ítems en el carrito: ${cart.items.length}`);
+    const cart = await page.evaluate(() => LS.cart.items.map((i) => ({ product: String(i.product_id), qty: i.quantity, unit: i.unit_price / 100 })));
+    const total = cart.reduce((a, i) => a + i.qty * i.unit, 0);
+    assert(cart.length === saved.lines.length, `renglones en el carrito: ${cart.length}, esperados ${saved.lines.length}`);
+    for (const l of saved.lines) {
+      const id = l.kind === "placard" ? saved.products.placard : saved.products.items[l.key];
+      const item = cart.find((i) => i.product === String(id));
+      assert(item, `falta en el carrito: ${l.name}`);
+      assert(item.qty === l.qty && item.unit === l.unit, `${l.name}: carrito ${item.qty} × ${item.unit}, validado ${l.qty} × ${l.unit}`);
+    }
     assert(total === saved.price, `total del carrito ${total} ≠ precio validado ${saved.price}`);
     await page.screenshot({ path: `${shots}/tienda-${mode}-4-carrito.png`, fullPage: true, timeout: 240_000 });
-    const decorated = await page.locator(".rm-cfg").count();
-    return `total $${total} · resumen visible en el carrito: ${decorated ? "sí" : "no (falta publicar el bloque del tema)"}`;
+    return `total $${total} · ` + saved.lines.map((l) => `${l.qty}×${l.kind === "placard" ? "placard " + l.variant.join("/") : l.key}`).join(", ");
   });
 
   await check("la configuración se recupera entera del servidor", async () => {
