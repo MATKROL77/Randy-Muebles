@@ -255,21 +255,21 @@ function computeQuote(config: WardrobeConfig): DemoQuote {
     ranurado: styles.filter((s) => s === "grooved").length,
     led: mods.filter((x) => x.ledShelves || x.ledSides).length,
   };
-  const where = (test: (x: ModuleConfig, i: number) => boolean) =>
-    mods
-      .map((x, i) => (test(x, i) ? i + 1 : 0))
-      .filter(Boolean)
-      .join(", ");
+  // "en el módulo 2", "en los módulos 1 y 3", "hojas 1, 2 y 4"
+  const where = (one: string, many: string, test: (x: ModuleConfig, i: number) => boolean) => {
+    const n = mods.map((x, i) => (test(x, i) ? i + 1 : 0)).filter(Boolean);
+    return n.length === 1 ? `${one} ${n[0]}` : `${many} ${n.slice(0, -1).join(", ")} y ${n[n.length - 1]}`;
+  };
   const detail: Record<ItemKey, string> = {
     modulo: `${mods.length} módulos en total`,
-    cajon: `en módulo ${where((x) => x.drawers > 0)}`,
-    bandeja: `en módulo ${where((x) => x.trays > 0)}`,
+    cajon: where("en el módulo", "en los módulos", (x) => x.drawers > 0),
+    bandeja: where("en el módulo", "en los módulos", (x) => x.trays > 0),
     estante: "maleteros, fijos y regulables",
     barral: "",
-    espejo: `hoja ${where((_, i) => styles[i] === "mirror")}`,
-    vidrio: `hoja ${where((_, i) => styles[i] === "glass")}`,
-    ranurado: `hoja ${where((_, i) => styles[i] === "grooved")}`,
-    led: `módulo ${where((x) => x.ledShelves || x.ledSides)}`,
+    espejo: where("hoja", "hojas", (_, i) => styles[i] === "mirror"),
+    vidrio: where("hoja", "hojas", (_, i) => styles[i] === "glass"),
+    ranurado: where("hoja", "hojas", (_, i) => styles[i] === "grooved"),
+    led: where("en el módulo", "en los módulos", (x) => x.ledShelves || x.ledSides),
   };
   for (const key of ITEM_KEYS) {
     if (qty[key] <= 0) continue;
@@ -293,7 +293,7 @@ export function configProperties(config: WardrobeConfig): { name: string; value:
     return look.style === "mirror" ? "espejo" : look.style === "glass" ? "vidrio" : `${DOOR_STYLE_LABELS[look.style].toLowerCase()} ${materialById(look.material).name.toLowerCase()}`;
   });
   const inside = (x: ModuleConfig) =>
-    [LAYOUT_LABELS[x.layout].toLowerCase(), x.drawers ? `${x.drawers} cajones` : "", x.trays ? `${x.trays} bandejas` : "", x.ledShelves || x.ledSides ? "LED" : ""].filter(Boolean).join(", ");
+    [LAYOUT_LABELS[x.layout].toLowerCase(), x.drawers ? `${x.drawers} ${x.drawers === 1 ? "cajón" : "cajones"}` : "", x.trays ? `${x.trays} ${x.trays === 1 ? "bandeja" : "bandejas"}` : "", x.ledShelves || x.ledSides ? "LED" : ""].filter(Boolean).join(", ");
   return [
     { name: "Medidas", value: `${dimensionsLabel(config)} (ancho × alto × prof.)` },
     { name: "Puertas", value: `${mods.length} corredizas: ${leaves.join(" + ")}` },

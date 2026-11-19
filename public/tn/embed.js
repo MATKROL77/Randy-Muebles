@@ -147,6 +147,17 @@
       var host = el.querySelector(".cart-item-info-container") || el;
       host.appendChild(box);
     }
+    // el placard va arriba de sus agregados, ordene como ordene la tienda
+    for (var k = 0; k < items.length; k++) {
+      var main = lines[items[k].getAttribute("data-item-id")];
+      if (!main || main.role === "item") continue;
+      var first = null;
+      for (var j = 0; j < items.length && !first; j++) {
+        var part = lines[items[j].getAttribute("data-item-id")];
+        if (part && part.role === "item" && part.id === main.id && items[j].parentNode === items[k].parentNode) first = items[j];
+      }
+      if (first && first.compareDocumentPosition(items[k]) & Node.DOCUMENT_POSITION_FOLLOWING) first.parentNode.insertBefore(items[k], first);
+    }
   }
 
   /** saca del carrito, de a uno, los agregados de un diseño cuyo placard se quitó */
