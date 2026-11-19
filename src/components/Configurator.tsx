@@ -430,6 +430,8 @@ export default function Configurator({ workshop = null, initial, onInquiry, stor
             onReady={() => setTimeout(() => setReady(true), 120)}
             // en la tienda el placard aparece armado: sin la animación de armado pieza por pieza
             intro={store ? false : undefined}
+            // en la tienda, menos píxeles: en el teléfono no se nota y anda más liviano
+            maxDpr={store ? 1.5 : undefined}
             captureRef={captureRef}
             zoom={shrink.zoom}
             framing={portrait ? 0.82 : undefined}
@@ -455,7 +457,7 @@ export default function Configurator({ workshop = null, initial, onInquiry, stor
 
         <header className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 p-3 sm:p-4">
           <div className="flex flex-col items-start gap-2">
-          {workshop ? (
+          {workshop && !store ? (
             <div className="pointer-events-auto rounded-2xl bg-surface/90 px-4 py-2.5 shadow-sm backdrop-blur">
               <p className="font-display text-base font-semibold leading-tight">{workshop.name}</p>
               <p className="text-xs text-ink-2">{catalog.brand.tagline}</p>

@@ -128,7 +128,7 @@ export async function handle(request: Request, env: Env): Promise<Response> {
 
     // recuperar una configuración guardada: para el carrito, el pedido o el taller
     const one = path.match(/^\/api\/tn\/configs\/([^/]+)(\/snapshot)?$/);
-    if (one && request.method === "GET") {
+    if (one && (request.method === "GET" || request.method === "HEAD")) {
       const id = one[1].toUpperCase();
       if (!isId(id)) return json({ error: "identificador_invalido" }, 400, h);
       if (one[2]) {

@@ -286,7 +286,7 @@ function KeyLight({ span, shape, rich }: { span: number; shape: WardrobeConfig["
         intensity={LIGHT.key}
         color="#fff9f1"
         castShadow
-        shadow-mapSize={[2048, 2048]}
+        shadow-mapSize={COARSE ? [1024, 1024] : [2048, 2048]}
         shadow-bias={-0.0004}
         shadow-normalBias={0.025}
         shadow-camera-left={-reach}
@@ -887,7 +887,7 @@ function SceneContents(props: ViewerProps & { hq: boolean; bus: PhotoBus; photoO
       </Suspense>
       <KeyLight span={span} shape={props.config.shape} rich={!!props.confine} />
       {/* sombras de borde difuso, que se abren con la distancia, como bajo la luz de un showroom */}
-      <SoftShadows size={22} samples={8} focus={0.55} />
+      <SoftShadows size={22} samples={COARSE ? 5 : 8} focus={0.55} />
       <Wardrobe props={props} kit={kit} hq={props.hq} />
       <ViewZoom zoom={props.zoom} />
       <ShadowGate />
@@ -924,6 +924,9 @@ function SceneContents(props: ViewerProps & { hq: boolean; bus: PhotoBus; photoO
  * sombras suaves se calculan en cada uno. Con ~2,4 millones de píxeles el
  * mueble se ve nítido y el 3D anda fluido en una notebook.
  */
+/** teléfonos y tabletas: sombras más chicas, que la diferencia no se ve y la batería sí */
+const COARSE = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
+
 function pixelCap(maxDpr: number): number {
   if (typeof window === "undefined") return 1;
   const area = Math.max(1, window.innerWidth * window.innerHeight);

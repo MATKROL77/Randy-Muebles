@@ -158,17 +158,24 @@ export function enforce(input: Partial<WardrobeConfig> | null | undefined): Ward
   const count = fits.reduce((best, n) => (Math.abs(n - wanted) < Math.abs(best - wanted) ? n : best), fits[0] ?? wanted);
   const same = given.length === count;
   const modules = Array.from({ length: count }, (_, i) => ({ ...(given[i] ?? given[given.length - 1]), ...(same ? {} : { width: 0 }) }));
-  return normalize({
-    ...INITIAL,
-    ...src,
-    shape: "straight",
-    doors: "sliding",
-    slope: { enabled: false, low: 1800, side: "right" },
-    curved: { left: false, right: false },
-    // el altillo no está en la lista de precios de la demo
-    topBox: { enabled: false, height: 450 },
-    runs: [{ width, modules }],
-  });
+  const build = (mods: ModuleConfig[]) =>
+    normalize({
+      ...INITIAL,
+      ...src,
+      shape: "straight",
+      doors: "sliding",
+      slope: { enabled: false, low: 1800, side: "right" },
+      curved: { left: false, right: false },
+      // el altillo no está en la lista de precios de la demo
+      topBox: { enabled: false, height: 450 },
+      runs: [{ width, modules: mods }],
+    });
+  const out = build(modules);
+  // anchos pedidos que no cierran con el total (un enlace o un pedido armado a mano):
+  // si corregirlos otra vez los cambia, no entraban, y se reparten parejo
+  const again = normalize(out).runs[0].modules;
+  const settled = again.every((m, i) => m.width === out.runs[0].modules[i].width);
+  return settled ? out : build(modules.map((m) => ({ ...m, width: 0 })));
 }
 
 export const initialConfig = (): WardrobeConfig => enforce(INITIAL);

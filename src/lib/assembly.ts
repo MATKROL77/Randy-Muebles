@@ -1377,7 +1377,7 @@ export function buildAssembly(config: WardrobeConfig): Assembly {
       glass: line("glass", "Vidrio fumé 4 mm", "m²"),
       frameProfile: line("frameProfile", "Perfil de aluminio para puerta", "m"),
       grooving: line("grooving", "Ranurado CNC por puerta", "u"),
-      ledStrip: line("ledStrip", config.led.color === "rgb" ? "Tira LED RGB" : "Tira LED blanca", "m"),
+      ledStrip: line("ledStrip", config.led.color === "rgb" ? "Tira LED RGB" : `Tira LED blanca ${config.led.color === "warm" ? "cálida" : config.led.color === "cool" ? "fría" : "neutra"}`, "m"),
       ledProfile: line("ledProfile", "Perfil de aluminio con difusor", "m"),
       powerSupply: line("powerSupply", "Fuente 12 V 60 W", "u"),
       sensor: line("sensor", "Sensor de apertura", "u"),

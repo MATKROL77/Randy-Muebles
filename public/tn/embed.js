@@ -147,6 +147,19 @@
       var host = el.querySelector(".cart-item-info-container") || el;
       host.appendChild(box);
     }
+    // agregados cuyo placard ya no está (se salió a mitad del borrado): se terminan de quitar
+    var present = {};
+    for (var o = 0; o < items.length; o++) {
+      var mine = lines[items[o].getAttribute("data-item-id")];
+      if (mine && mine.role !== "item") present[mine.id] = 1;
+    }
+    for (var u = 0; u < items.length; u++) {
+      var orphan = lines[items[u].getAttribute("data-item-id")];
+      if (orphan && orphan.role === "item" && !present[orphan.id] && !removing[orphan.id]) {
+        removing[orphan.id] = 1;
+        removeParts(orphan.id, 300);
+      }
+    }
     // el placard va arriba de sus agregados, ordene como ordene la tienda
     for (var k = 0; k < items.length; k++) {
       var main = lines[items[k].getAttribute("data-item-id")];
@@ -160,8 +173,10 @@
     }
   }
 
+  var removing = {};
   /** saca del carrito, de a uno, los agregados de un diseño cuyo placard se quitó */
-  function removeParts(designId) {
+  function removeParts(designId, wait) {
+    removing[designId] = 1;
     var lines = store.get(LINES_KEY) || {};
     var ids = Object.keys(lines).filter(function (k) {
       return lines[k].id === designId && lines[k].role === "item";
@@ -182,9 +197,60 @@
       }
       delete lines[id];
       store.set(LINES_KEY, lines);
-      setTimeout(next, 1400);
+      setTimeout(next, 900);
     };
-    setTimeout(next, 1600);
+    setTimeout(next, wait || 1200);
+  }
+
+  /* ---------- 3b. la compra termina en el carrito: es una demostración ---------- */
+
+  function blockCheckout() {
+    var GO = '[name="go_to_checkout"], .js-cart-submit, .js-ajax-cart-submit, a[href*="/checkout"]';
+    var stop = function (e) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      var lines = store.get(LINES_KEY) || {};
+      var main = Object.keys(lines)
+        .map(function (k) {
+          return lines[k];
+        })
+        .filter(function (l) {
+          return l.role !== "item";
+        })
+        .pop();
+      var old = document.querySelector(".rm-done");
+      if (old) old.remove();
+      var wrap = document.createElement("div");
+      wrap.className = "rm-done";
+      wrap.setAttribute("role", "dialog");
+      wrap.setAttribute("aria-modal", "true");
+      wrap.innerHTML =
+        "<div class='rm-card'><h3>Hasta acá llega la demostración</h3>" +
+        "<p style='margin:8px 0 0'>En la tienda real, acá empieza el pago. En esta demo no se cobra nada ni se generan pedidos.</p>" +
+        (main ? "<p style='margin:12px 0 0'>Tu diseño quedó guardado con el código <b class='rm-id'>" + esc(main.id) + "</b>" + (main.sheetUrl ? ": <a target='_blank' rel='noopener' style='text-decoration:underline' href='" + esc(main.sheetUrl) + "'>ver la hoja de taller</a> que recibiría la carpintería." : ".") + "</p>" : "") +
+        "<p class='rm-note' style='margin:12px 0 0'>" + esc(DISCLAIMER) + "</p>" +
+        "<div class='rm-btns'><button type='button' class='rm-primary' data-rm-close>Entendido</button></div></div>";
+      wrap.addEventListener("click", function (ev) {
+        if (ev.target === wrap || (ev.target && ev.target.hasAttribute && ev.target.hasAttribute("data-rm-close"))) wrap.remove();
+      });
+      document.body.appendChild(wrap);
+    };
+    document.addEventListener(
+      "click",
+      function (e) {
+        var t = e.target && e.target.closest ? e.target.closest(GO) : null;
+        if (t) stop(e);
+      },
+      true,
+    );
+    document.addEventListener(
+      "submit",
+      function (e) {
+        var f = e.target;
+        if (f && ((f.action || "").indexOf("checkout") >= 0 || (f.querySelector && f.querySelector('[name="go_to_checkout"]')))) stop(e);
+      },
+      true,
+    );
   }
 
   /* ---------- 4. los agregados existen en la tienda, pero no se venden sueltos ---------- */
@@ -503,6 +569,7 @@
     var anchor = document.querySelector("[data-rm-configurator]");
     if (anchor && !document.getElementById("rm-configurator")) mount(anchor);
     css();
+    blockCheckout();
     decorate();
     loadCatalog();
     // el tema vuelve a dibujar el carrito cada vez que cambia
