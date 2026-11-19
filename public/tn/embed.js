@@ -25,6 +25,9 @@
   var DISCLAIMER =
     "Demostración de configurador 3D. Modelos, colores, opciones y precios ilustrativos, sujetos a adaptación al catálogo y las condiciones de fabricación del comercio.";
   var LINES_KEY = "rm.cart.lines.v1";
+  /** lo que se muestra donde iría un precio fijo: el placard se cotiza según cómo se arme */
+  var OPEN_PRICE = "Precio según tu diseño";
+  var COVER = BASE + "/img/randy/placard-a-tu-medida.jpg";
   var DRAFT_KEY = "rm.draft.v1.";
 
   var money = function (n) {
@@ -117,6 +120,15 @@
           "</dl>" +
           "<small>Total de demostración con sus agregados: " + money(line.price) + " · <a target='_blank' rel='noopener' href='" + esc(line.viewUrl) + "'>ver en 3D</a>" + (line.sheetUrl ? " · <a target='_blank' rel='noopener' href='" + esc(line.sheetUrl) + "'>hoja de taller</a>" : "") + "</small>";
         el.classList.add("rm-extras");
+        var thumb = el.querySelector(".cart-item-image-container img");
+        if (thumb) {
+          thumb.removeAttribute("srcset");
+          thumb.removeAttribute("data-srcset");
+          thumb.src = line.snapshotUrl || COVER;
+          thumb.style.objectFit = "cover";
+          thumb.classList.remove("lazyload");
+          thumb.classList.add("lazyloaded");
+        }
         var mq = el.querySelector(".js-cart-quantity-input");
         if (mq) mq.readOnly = true;
         // quitar el placard quita también sus agregados
@@ -192,6 +204,20 @@
         if (cell && cell.children.length === 1 && cell !== document.body && !cell.classList.contains("js-product-table")) cell.style.display = "none";
       }
     });
+    if (products.placard) {
+      var mine = document.querySelectorAll('.js-item-product[data-product-id="' + products.placard + '"]');
+      for (var m = 0; m < mine.length; m++) {
+        var prices = mine[m].querySelectorAll(".js-price-display");
+        for (var q = 0; q < prices.length; q++) {
+          if (prices[q].getAttribute("data-rm-open")) continue;
+          prices[q].setAttribute("data-rm-open", "1");
+          prices[q].textContent = OPEN_PRICE;
+          prices[q].style.display = "";
+        }
+        var extra = mine[m].querySelectorAll(".js-compare-price-display, .js-item-installments, .js-max-installments-container, .js-installments-container");
+        for (var x = 0; x < extra.length; x++) extra[x].style.display = "none";
+      }
+    }
     var here = window.LS && LS.product && String(LS.product.id);
     if (here && ids.indexOf(here) >= 0 && products.url) location.replace(products.url);
   }
