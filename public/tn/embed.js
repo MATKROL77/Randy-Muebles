@@ -565,7 +565,24 @@
     });
   }
 
+  /**
+   * El diseño nuevo de la tienda de prueba no está publicado: se ve con
+   * ?theme_installation_id. Si la ficha se abrió sin eso (con el diseño viejo,
+   * que no trae el bloque de código del pie), se vuelve a pedir con el diseño nuevo.
+   */
+  var PREVIEW_THEME = "14921583";
+  function previewFallback() {
+    if (location.hostname !== "medida3.mitiendanube.com") return false;
+    if (document.querySelector('[data-store^="code-block"]')) return false;
+    var u = new URL(location.href);
+    if (u.searchParams.get("theme_installation_id")) return false;
+    u.searchParams.set("theme_installation_id", PREVIEW_THEME);
+    location.replace(u.pathname + u.search + u.hash);
+    return true;
+  }
+
   function start() {
+    if (previewFallback()) return;
     var anchor = document.querySelector("[data-rm-configurator]");
     if (anchor && !document.getElementById("rm-configurator")) mount(anchor);
     css();
