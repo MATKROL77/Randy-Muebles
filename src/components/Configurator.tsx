@@ -1158,7 +1158,8 @@ export default function Configurator({ workshop = null, initial, onInquiry, stor
               )}
             </div>
           </div>
-          <p className="mt-1 text-[10px] leading-snug text-ink-2">
+          {/* en el teléfono, dentro de la tienda, la leyenda va debajo del configurador: acá le saca lugar a los controles */}
+          <p className={`mt-1 text-[10px] leading-snug text-ink-2 ${store ? "max-lg:hidden" : ""}`}>
             {store
               ? store.disclaimer
               : catalog.brand.samplePricing
