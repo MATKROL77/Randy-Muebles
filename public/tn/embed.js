@@ -75,6 +75,7 @@
       ".rm-cfg dl{margin:6px 0 0;display:grid;grid-template-columns:auto 1fr;gap:1px 10px}.rm-cfg dt{opacity:.65}.rm-cfg dd{margin:0}",
       ".rm-cfg a{text-decoration:underline}.rm-cfg img{float:right;width:84px;height:84px;object-fit:cover;border-radius:8px;margin:0 0 6px 10px}",
       ".rm-cfg small{display:block;opacity:.65;margin-top:6px}",
+      ".cart-item-info-container>.rm-cfg{grid-column:1/-1;max-width:640px}.js-cart-item.rm-extras{align-items:start}.rm-extras .cart-item-image-container img{aspect-ratio:1/1;object-fit:cover;border-radius:8px}",
       ".rm-extras .js-cart-quantity-btn{visibility:hidden;pointer-events:none}.rm-extras .js-cart-quantity-input{pointer-events:none;width:5ch;background:transparent;border:0}.rm-part .js-cart-item-remove{display:none!important}",
       ".rm-done{position:fixed;inset:0;z-index:2147483000;background:rgba(20,18,15,.55);display:flex;align-items:flex-end;justify-content:center;padding:0}",
       "@media (min-width:640px){.rm-done{align-items:center;padding:24px}}",
@@ -270,7 +271,13 @@
     var tag = ["properties[Diseño]", saved.id];
     var last = null;
     var chain = Promise.resolve();
-    saved.lines.forEach(function (line) {
+    // la tienda muestra primero lo último que se agregó: el placard va al final para quedar arriba
+    var ordered = saved.lines.filter(function (l) {
+      return l.kind !== "placard";
+    }).concat(saved.lines.filter(function (l) {
+      return l.kind === "placard";
+    }));
+    ordered.forEach(function (line) {
       chain = chain.then(function () {
         var fields;
         if (line.kind === "placard") {
