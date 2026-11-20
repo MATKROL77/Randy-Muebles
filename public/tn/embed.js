@@ -253,6 +253,74 @@
     );
   }
 
+  /* ---------- 5. vista previa: recorrer toda la tienda con el diseño en borrador ---------- */
+
+  /**
+   * Tiendanube muestra un diseño sin publicar si la dirección lleva
+   * ?theme_installation_id=<id>. Quien entra con ese enlace sigue viendo ese
+   * diseño en toda la visita: el parámetro se recuerda en la pestaña y se
+   * agrega a cada página de la tienda que se abre.
+   */
+  var PREVIEW_KEY = "rm.preview.theme";
+  function keepPreview() {
+    var param = "theme_installation_id";
+    var here = new URLSearchParams(location.search).get(param);
+    var theme = null;
+    try {
+      if (here) sessionStorage.setItem(PREVIEW_KEY, here);
+      theme = here || sessionStorage.getItem(PREVIEW_KEY);
+    } catch (e) {
+      theme = here;
+    }
+    if (!theme || !/^[0-9]+$/.test(theme)) return;
+    var withTheme = function (href) {
+      try {
+        var u = new URL(href, location.href);
+        if (u.origin !== location.origin || u.searchParams.get(param)) return null;
+        if (/^\/(admin|checkout)/.test(u.pathname)) return null;
+        u.searchParams.set(param, theme);
+        return u.pathname + u.search + u.hash;
+      } catch (e) {
+        return null;
+      }
+    };
+    // esta página se abrió sin el parámetro: se vuelve a pedir con el diseño en borrador
+    if (!here) {
+      var again = withTheme(location.href);
+      if (again) {
+        location.replace(again);
+        return;
+      }
+    }
+    document.addEventListener(
+      "click",
+      function (e) {
+        var a = e.target && e.target.closest ? e.target.closest("a[href]") : null;
+        if (!a || a.target === "_blank") return;
+        var raw = a.getAttribute("href") || "";
+        if (!raw || raw.charAt(0) === "#" || /^(javascript|mailto|tel):/i.test(raw)) return;
+        var next = withTheme(a.href);
+        if (next) a.setAttribute("href", next);
+      },
+      true,
+    );
+    // los formularios que navegan (buscar) también
+    document.addEventListener(
+      "submit",
+      function (e) {
+        var f = e.target;
+        if (!f || !f.action || (f.method || "get").toLowerCase() !== "get") return;
+        if (f.querySelector('input[name="' + param + '"]')) return;
+        var i = document.createElement("input");
+        i.type = "hidden";
+        i.name = param;
+        i.value = theme;
+        f.appendChild(i);
+      },
+      true,
+    );
+  }
+
   /* ---------- 4. los agregados existen en la tienda, pero no se venden sueltos ---------- */
 
   var CATALOG_KEY = "rm.catalog.v2";
@@ -583,6 +651,7 @@
 
   function start() {
     if (previewFallback()) return;
+    keepPreview();
     var anchor = document.querySelector("[data-rm-configurator]");
     if (anchor && !document.getElementById("rm-configurator")) mount(anchor);
     css();
